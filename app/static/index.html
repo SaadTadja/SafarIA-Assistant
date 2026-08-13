@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SafarIA Assistant</title>
+<style>
+  :root {
+    /* Palette sampled from royalairmaroc.com's own CSS custom properties */
+    --bg: #fafafa;
+    --panel: #ffffff;
+    --border: #d8d7d4;
+    --text: #1a1717;
+    --text-muted: #7b7a78;
+    --user-bubble: #c20831;
+    --user-text: #ffffff;
+    --bot-bubble: #f7f7f7;
+    --bot-text: #1a1717;
+    --accent: #c20831;
+    --accent-dark: #690a22;
+    --gold: #b49360;
+    --tool-color: #00875d;
+    --tool-bg: #dbf0eb;
+    --rag-color: #1167b2;
+    --rag-bg: #dfeefd;
+    --hybrid-color: #b7501f;
+    --hybrid-bg: #fef0e3;
+    --llm-color: #7b7a78;
+    --llm-bg: #ebeae8;
+    --error: #a90044;
+    --error-bg: #f2d9e3;
+    --accent-tint: #f0dddd;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    padding: 12px 24px;
+    background: var(--panel);
+    border-bottom: 3px solid var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    z-index: 2;
+  }
+
+  #logo-mark {
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    overflow: hidden;
+    flex-shrink: 0;
+    box-shadow: 0 2px 5px rgba(194,8,49,0.35);
+  }
+
+  #logo-mark img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .header-text { display: flex; flex-direction: column; gap: 1px; }
+
+  header h1 {
+    font-size: 17px;
+    margin: 0;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+  }
+
+  header h1 span {
+    color: var(--accent);
+  }
+
+  header .subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  #lang-badge {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    padding: 5px 11px;
+    border-radius: 999px;
+    background: var(--bg);
+    flex-shrink: 0;
+  }
+
+  #lang-badge .sep { color: var(--border); }
+
+  #hero {
+    position: relative;
+    height: 150px;
+    flex-shrink: 0;
+    overflow: hidden;
+    background: url('/static/img/hero.png') center 60% / cover no-repeat;
+  }
+
+  #hero .overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(100deg, rgba(105,10,34,0.88) 0%, rgba(194,8,49,0.72) 45%, rgba(141,43,97,0.35) 100%);
+  }
+
+  #hero svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+
+  #hero-text {
+    position: relative;
+    z-index: 1;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 28px;
+    color: #fff;
+  }
+
+  #hero-text .eyebrow {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 4px;
+  }
+
+  #hero-text h2 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  #hero-text p {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: rgba(255,255,255,0.85);
+  }
+
+  #chat-container {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    justify-content: center;
+    background:
+      radial-gradient(circle at 1px 1px, rgba(194,8,49,0.08) 1px, transparent 0) 0 0/24px 24px,
+      linear-gradient(180deg, #fdfbfa 0%, #f5efec 100%);
+  }
+
+  #chat {
+    width: 100%;
+    max-width: 720px;
+    padding: 20px 20px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .row {
+    display: flex;
+    flex-direction: column;
+    max-width: 80%;
+  }
+
+  .row.user { align-self: flex-end; align-items: flex-end; }
+  .row.bot { align-self: flex-start; align-items: flex-start; }
+
+  .bubble {
+    padding: 10px 14px;
+    border-radius: 14px;
+    line-height: 1.45;
+    font-size: 14.5px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+
+  .row.user .bubble {
+    background: var(--user-bubble);
+    color: var(--user-text);
+    border-bottom-right-radius: 4px;
+  }
+
+  .row.bot .bubble {
+    background: var(--bot-bubble);
+    color: var(--bot-text);
+    border-bottom-left-radius: 4px;
+  }
+
+  .row.bot .bubble.error {
+    background: var(--error-bg);
+    color: var(--error);
+  }
+
+  .badge {
+    margin-top: 4px;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  .badge.tool { background: var(--tool-bg); color: var(--tool-color); }
+  .badge.rag { background: var(--rag-bg); color: var(--rag-color); }
+  .badge.hybrid { background: var(--hybrid-bg); color: var(--hybrid-color); }
+  .badge.llm { background: var(--llm-bg); color: var(--llm-color); }
+
+  .typing {
+    display: flex;
+    gap: 4px;
+    padding: 12px 14px;
+  }
+
+  .typing span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    animation: bounce 1.2s infinite ease-in-out;
+  }
+
+  .typing span:nth-child(2) { animation-delay: 0.15s; }
+  .typing span:nth-child(3) { animation-delay: 0.3s; }
+
+  @keyframes bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+
+  #suggestions-wrap {
+    background: #f5efec;
+    display: flex;
+    justify-content: center;
+  }
+
+  #suggestions {
+    width: 100%;
+    max-width: 720px;
+    padding: 0 20px 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .chip {
+    font-size: 12.5px;
+    padding: 6px 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+  }
+
+  .chip:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-tint);
+  }
+
+  #input-bar {
+    display: flex;
+    justify-content: center;
+    padding: 14px 20px 20px;
+    background: #f5efec;
+  }
+
+  #input-form {
+    width: 100%;
+    max-width: 720px;
+    display: flex;
+    gap: 10px;
+  }
+
+  #message-input {
+    flex: 1;
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    font-size: 14.5px;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+
+  #message-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-tint);
+  }
+
+  #send-btn {
+    padding: 0 22px;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: white;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  #send-btn:hover:not(:disabled) {
+    background: var(--accent-dark);
+  }
+
+  #send-btn:disabled {
+    background: #dba9b3;
+    cursor: not-allowed;
+  }
+
+  .empty-state {
+    margin: auto;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 14px;
+    padding-top: 60px;
+  }
+
+  .empty-state .icon {
+    width: 56px;
+    height: 56px;
+    margin: 0 auto 14px;
+    border-radius: 50%;
+    background: linear-gradient(155deg, var(--accent), var(--accent-dark));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(194,8,49,0.22);
+  }
+
+  .empty-state .icon svg {
+    width: 26px;
+    height: 26px;
+    fill: #ffffff;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div id="logo-mark">
+    <img src="/static/img/logo_ram.svg" alt="logo" />
+  </div>
+  <div class="header-text">
+    <h1>Safar<span>IA</span> Assistant</h1>
+    <span class="subtitle">RAG + tool-calling demo</span>
+  </div>
+  <div id="lang-badge">&#127760; EN <span class="sep">/</span> FR</div>
+</header>
+
+<div id="hero">
+  <div class="overlay"></div>
+  <svg viewBox="0 0 1440 260" preserveAspectRatio="none">
+    <path d="M -20 60 L 260 25" stroke="rgba(255,255,255,0.55)" stroke-width="2" stroke-dasharray="1 8" stroke-linecap="round"/>
+    <g transform="translate(255,20) rotate(8)" fill="rgba(255,255,255,0.9)">
+      <path d="M0 0 L18 -3 L34 4 L18 5 L10 12 L4 9 L8 3 Z"/>
+    </g>
+  </svg>
+  <div id="hero-text">
+    <div class="eyebrow">Assistant de voyage</div>
+    <h2>Fly smarter. Ask anything.</h2>
+    <p>Baggage, refunds, check-in, flight status &amp; bookings — answered instantly.</p>
+  </div>
+</div>
+
+<div id="chat-container">
+  <div id="chat">
+    <div class="empty-state" id="empty-state">
+      <div class="icon"><svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg></div>
+      Ask about baggage, refunds, check-in, flight status, bookings, or airports.<br>
+      Every answer is tagged with where it came from.<br>
+      <span style="font-size:12px;">Ask in English or French — Posez vos questions en anglais ou en fran&ccedil;ais.</span>
+    </div>
+  </div>
+</div>
+
+<div id="suggestions-wrap">
+  <div id="suggestions">
+    <div class="chip" data-q="What are the cabin baggage rules?">What are the cabin baggage rules?</div>
+    <div class="chip" data-q="What is the status of flight AH1235?">Status of flight AH1235?</div>
+    <div class="chip" data-q="My flight AH1235 is cancelled. Can I get a refund?">My flight is cancelled, can I get a refund?</div>
+    <div class="chip" data-q="Give me information about CMN airport.">Info about Casablanca CMN airport</div>
+  </div>
+</div>
+
+<div id="input-bar">
+  <form id="input-form">
+    <input id="message-input" type="text" placeholder="Type a message..." autocomplete="off" />
+    <button id="send-btn" type="submit">Send</button>
+  </form>
+</div>
+
+<script>
+const chat = document.getElementById('chat');
+const emptyState = document.getElementById('empty-state');
+const form = document.getElementById('input-form');
+const input = document.getElementById('message-input');
+const sendBtn = document.getElementById('send-btn');
+
+function classifySource(source) {
+  if (source === 'llm') return 'llm';
+  if (source === 'rag') return 'rag';
+  if (source.includes('+')) return 'hybrid';
+  return 'tool';
+}
+
+function formatSourceLabel(source) {
+  return source
+    .split('+')
+    .map(s => s === 'rag' ? 'Knowledge Base' : s.replace(/_/g, ' '))
+    .join(' + ');
+}
+
+function addRow(role, text) {
+  emptyState.style.display = 'none';
+  const row = document.createElement('div');
+  row.className = 'row ' + role;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = text;
+  row.appendChild(bubble);
+  chat.appendChild(row);
+  chat.parentElement.scrollTop = chat.parentElement.scrollHeight;
+  return row;
+}
+
+function addTypingIndicator() {
+  const row = document.createElement('div');
+  row.className = 'row bot';
+  row.id = 'typing-row';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+  bubble.style.padding = '0';
+  row.appendChild(bubble);
+  chat.appendChild(row);
+  chat.parentElement.scrollTop = chat.parentElement.scrollHeight;
+}
+
+function removeTypingIndicator() {
+  const row = document.getElementById('typing-row');
+  if (row) row.remove();
+}
+
+async function sendMessage(message) {
+  addRow('user', message);
+  input.value = '';
+  sendBtn.disabled = true;
+  addTypingIndicator();
+
+  try {
+    const response = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    });
+
+    removeTypingIndicator();
+
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      const row = addRow('bot', detail.detail || `Error: ${response.status}`);
+      row.querySelector('.bubble').classList.add('error');
+      return;
+    }
+
+    const data = await response.json();
+    const row = addRow('bot', data.answer);
+    const badge = document.createElement('div');
+    badge.className = 'badge ' + classifySource(data.source);
+    badge.textContent = formatSourceLabel(data.source);
+    row.appendChild(badge);
+  } catch (err) {
+    removeTypingIndicator();
+    const row = addRow('bot', 'Could not reach the server. Is it running?');
+    row.querySelector('.bubble').classList.add('error');
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
+  }
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const message = input.value.trim();
+  if (!message) return;
+  sendMessage(message);
+});
+
+document.querySelectorAll('.chip').forEach(chip => {
+  chip.addEventListener('click', () => sendMessage(chip.dataset.q));
+});
+
+input.focus();
+</script>
+
+</body>
+</html>

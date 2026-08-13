@@ -1,0 +1,5 @@
+This search engine is a real-time application for entry regulations (i.e., passport, visa, health and transit requirements), provided and managed by the International Air Transport Association (IATA). The content of this site is updated daily by a team of professional editors. All immigration information displayed is collected from more than 210 countries through an extensive network of airlines, immigration authorities, the World Health Organization and other reliable sources.
+We recommend that our passengers check beforehand the conditions of access to these countries as well as any applicable restrictions.
+
+You can easily obtain information based on passenger's nationality, embarkation point, country(ies) visited in the 6 days prior to the trip, transit and destination point(s).
+
