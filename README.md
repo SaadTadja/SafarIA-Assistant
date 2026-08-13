@@ -384,6 +384,20 @@ check once flagged "you would **not** be eligible for a refund" as a hallucinati
 it contains "eligible for a refund", missing the negation) and NDCG/MRR, which would need
 full relevance judgments across the whole corpus per query.
 
+## Bonus features
+
+Honest scorecard against the brief's bonus list - claimed only where actually built and
+verified, not where merely partially addressed:
+
+| Bonus item | Status | Notes |
+|---|---|---|
+| Mémoire conversationnelle | ✅ Done | See "Conversational memory" above - tested at both a non-live (plumbing) and live (model actually uses context) level. |
+| Gestion correcte des erreurs API | ✅ Done | See "How API errors are handled" - retry with backoff, distinct handling per error type, two real bugs found and fixed via testing. |
+| Tests automatiques sur le choix RAG / Tool | ✅ Done | `tests/test_router.py` - all 6 brief scenarios parametrized and asserted against `source`, live-verified. |
+| Interface utilisateur simple | ✅ Done | `app/static/index.html` - branded, source badges per answer, bilingual EN/FR, no build step. |
+| Observabilité des appels LLM | 🟡 Partial | Every answer is tagged with its routing decision (`source`, visible as a UI badge, not just in logs) - real but lightweight. No structured logging, request tracing, or per-call latency/token tracking at runtime; `eval/run_eval.py` computes token counts and cost, but only as an offline evaluation script. |
+| Streaming | ❌ Not done | `chat.completions.create()` is called without `stream=True`; the UI does one `fetch().then()`, not incremental reads. Not attempted. |
+
 ## Limitations
 
 - **Currently running on a free-tier LLM**, with a measured routing-accuracy ceiling of
