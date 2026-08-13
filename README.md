@@ -195,6 +195,28 @@ the raw similarity score is actually *higher* than some genuine matches, meaning
 alone can't reject it - that test verifies mechanism #1 (the router's own judgment about query
 intent) catches it anyway. Two independent layers, not one.
 
+## Conversational memory
+
+Bonus feature: `POST /chat` accepts an optional `session_id`. Omit it to start a new
+conversation; the server generates one and returns it in the response. Send it back on
+follow-up requests and the router has full context from every prior turn in that session -
+`router.chat()` accepts an optional `messages` history and continues it rather than always
+starting fresh, and returns the updated history for the caller to persist.
+
+`app/main.py` keeps an in-memory `dict[session_id, messages]` (`_sessions`) - the simplest
+option that satisfies the bonus requirement for a demo; see "Limitations" for why this
+wouldn't be the right choice for a real deployment. The browser UI (`app/static/index.html`)
+generates a session on the first message and reuses it for the rest of the page's lifetime.
+
+Tested at two levels: `tests/test_main.py` has two non-live tests verifying the session
+plumbing itself (a session ID is generated and correctly round-tripped, and the exact history
+returned by one call is what the next call receives) without needing a live LLM call.
+`tests/test_router.py::test_conversational_memory_uses_prior_context` is a live test that
+actually exercises the model: it asks about flight AH1235, then asks "Can I get a refund for
+it?" in a second turn, and asserts the router correctly resolves "it" from context (routes to
+`search_knowledge_base` and doesn't ask which flight) - this is the test that verifies memory
+*works*, not just that it's wired up.
+
 ## How hallucinations are limited
 
 - The system prompt explicitly instructs: *"NEVER invent details that weren't returned by a
@@ -369,9 +391,9 @@ full relevance judgments across the whole corpus per query.
   providers - see "Project evolution"). This is the single largest gap between this
   project's engineering and its live behavior, and it's a budget constraint, not an
   architecture gap.
-- **No conversational memory.** Each `/chat` call starts a fresh session; a follow-up like
-  "and what about my baggage?" after a flight-status question won't have context from the
-  prior turn.
+- **Conversation history is in-memory and unbounded** (`_sessions` dict in `main.py`) - fine
+  for a demo/single-process deployment, but lost on restart and never evicted. A real
+  deployment would need a store with TTL (Redis, a DB) instead.
 - **No vector database.** Retrieval is a brute-force cosine similarity scan over all chunks
   in memory (`app/rag.py`). This is fine at the current corpus size but won't scale past a
   few thousand chunks - a real production system would need Chroma/FAISS/pgvector with

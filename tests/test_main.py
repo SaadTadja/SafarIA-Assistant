@@ -59,3 +59,43 @@ def test_chat_endpoint_handles_rate_limit_gracefully(monkeypatch):
     monkeypatch.setattr(main_module, "router_chat", raise_rate_limit)
     response = client.post("/chat", json={"message": "What are the baggage rules?"})
     assert response.status_code == 429
+
+
+def test_chat_endpoint_generates_session_id_when_none_given(monkeypatch):
+    """No live LLM call needed here - this just checks the session plumbing in main.py,
+    not whether the model actually uses the history correctly (that's covered live in
+    test_router.py::test_conversational_memory_uses_prior_context)."""
+    def fake_chat(client, message, messages=None, **kwargs):
+        history = messages or []
+        return {"answer": "ok", "source": "llm", "tool_calls": [], "messages": history + [{"role": "user", "content": message}]}
+
+    monkeypatch.setattr(main_module, "router_chat", fake_chat)
+    response = client.post("/chat", json={"message": "Hello"})
+    assert response.status_code == 200
+    session_id = response.json()["session_id"]
+    assert session_id  # non-empty, server-generated
+
+
+def test_chat_endpoint_reuses_and_extends_session_history(monkeypatch):
+    received_histories = []
+
+    def fake_chat(client, message, messages=None, **kwargs):
+        received_histories.append(messages)
+        history = messages or []
+        new_history = history + [{"role": "user", "content": message}, {"role": "assistant", "content": "ok"}]
+        return {"answer": "ok", "source": "llm", "tool_calls": [], "messages": new_history}
+
+    monkeypatch.setattr(main_module, "router_chat", fake_chat)
+
+    first = client.post("/chat", json={"message": "My flight is AH1235"})
+    session_id = first.json()["session_id"]
+
+    second = client.post("/chat", json={"message": "Is it delayed?", "session_id": session_id})
+    assert second.json()["session_id"] == session_id
+
+    # first call had no prior history; second call received exactly what the first call returned
+    assert received_histories[0] is None
+    assert received_histories[1] == [
+        {"role": "user", "content": "My flight is AH1235"},
+        {"role": "assistant", "content": "ok"},
+    ]

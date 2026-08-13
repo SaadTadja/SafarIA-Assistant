@@ -3,6 +3,7 @@ Also serves a simple browser UI (bonus point: "interface utilisateur simple") at
 """
 
 import os
+import uuid
 from pathlib import Path
 
 import openai
@@ -23,6 +24,11 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 _client = None
 
+# In-memory conversation store: session_id -> the "messages" list from that session's last
+# router.chat() call. Ephemeral (lost on restart) and unbounded (no eviction) - fine for a
+# demo/single-process deployment, not for production (would need Redis/a DB with TTL there).
+_sessions: dict[str, list[dict]] = {}
+
 
 def get_client():
     global _client
@@ -39,18 +45,22 @@ def get_client():
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: str | None = None  # omit to start a new conversation
 
 
 class ChatResponse(BaseModel):
     answer: str
     source: str
+    session_id: str
 
 
 @app.post("/chat", response_model=ChatResponse)
 def chat_endpoint(request: ChatRequest) -> ChatResponse:
     client = get_client()
+    session_id = request.session_id or str(uuid.uuid4())
+    history = _sessions.get(session_id)
     try:
-        result = router_chat(client, request.message)
+        result = router_chat(client, request.message, messages=history)
     except openai.RateLimitError:
         raise HTTPException(status_code=429, detail="Rate limited by the LLM provider - please try again shortly.")
     except openai.APIStatusError as e:
@@ -59,7 +69,8 @@ def chat_endpoint(request: ChatRequest) -> ChatResponse:
         else:
             detail = f"The LLM provider returned an error ({e.status_code})."
         raise HTTPException(status_code=502, detail=detail)
-    return ChatResponse(answer=result["answer"], source=result["source"])
+    _sessions[session_id] = result["messages"]
+    return ChatResponse(answer=result["answer"], source=result["source"], session_id=session_id)
 
 
 @app.get("/health")

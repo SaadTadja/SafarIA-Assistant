@@ -420,6 +420,7 @@ const emptyState = document.getElementById('empty-state');
 const form = document.getElementById('input-form');
 const input = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
+let sessionId = null; // set from the server's first response, then reused for the rest of this conversation
 
 function classifySource(source) {
   if (source === 'llm') return 'llm';
@@ -476,7 +477,7 @@ async function sendMessage(message) {
     const response = await fetch('/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, session_id: sessionId }),
     });
 
     removeTypingIndicator();
@@ -489,6 +490,7 @@ async function sendMessage(message) {
     }
 
     const data = await response.json();
+    sessionId = data.session_id;
     const row = addRow('bot', data.answer);
     const badge = document.createElement('div');
     badge.className = 'badge ' + classifySource(data.source);

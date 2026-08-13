@@ -166,12 +166,19 @@ def call_with_retry(fn, *args, max_retries: int = 5, base_delay: float = 15, **k
             time.sleep(base_delay * (2 ** attempt))
 
 
-def chat(client: openai.OpenAI, message: str, max_tool_calls: int = 4) -> dict:
-    """Run one user message through the router. Returns {"answer", "source", "tool_calls"}."""
-    messages = [
-        {"role": "system", "content": SYSTEM_INSTRUCTION},
-        {"role": "user", "content": message},
-    ]
+def chat(
+    client: openai.OpenAI,
+    message: str,
+    messages: list[dict] | None = None,
+    max_tool_calls: int = 4,
+) -> dict:
+    """Run one user message through the router. Pass the "messages" list returned by a
+    previous call to continue that conversation with full context; omit it to start a new
+    one. Returns {"answer", "source", "tool_calls", "messages"} - "messages" is the updated
+    history, to be passed back in on the next turn for conversational memory."""
+    if messages is None:
+        messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
+    messages = messages + [{"role": "user", "content": message}]
 
     calls_made: list[str] = []
     final_answer = "Sorry, I couldn't complete this request."
@@ -207,4 +214,4 @@ def chat(client: openai.OpenAI, message: str, max_tool_calls: int = 4) -> dict:
     labels = ["rag" if name == "search_knowledge_base" else name for name in calls_made]
     source = "+".join(dict.fromkeys(labels)) if labels else "llm"
 
-    return {"answer": final_answer, "source": source, "tool_calls": calls_made}
+    return {"answer": final_answer, "source": source, "tool_calls": calls_made, "messages": messages}

@@ -60,3 +60,24 @@ def test_router_catches_hard_edge_case_raw_rag_misses(client):
         f"expected no tool call (source='llm'), got source={result['source']!r} "
         f"answer={result['answer']!r}"
     )
+
+
+def test_conversational_memory_uses_prior_context(client):
+    """Two turns: the second message ("Can I get a refund for it?") only makes sense if
+    the model remembers "it" = AH1235 from the first turn's "messages" history. Without
+    memory (i.e. without passing "messages" back in), the model has no way to know which
+    flight is being asked about."""
+    first = chat(client, "What is the status of flight AH1235?")
+    time.sleep(2)
+    second = chat(client, "Can I get a refund for it?", messages=first["messages"])
+
+    assert "rag" in second["source"], (
+        f"expected search_knowledge_base to be called using context carried over from the "
+        f"first turn, got source={second['source']!r} answer={second['answer']!r}"
+    )
+    clarifying_phrases = ["which flight", "flight number", "specify", "let me know which"]
+    answer_lower = second["answer"].lower()
+    assert not any(phrase in answer_lower for phrase in clarifying_phrases), (
+        f"model asked for clarification instead of using context from the first turn - "
+        f"conversational memory isn't working: {second['answer']!r}"
+    )
