@@ -42,9 +42,7 @@ def test_ui_served_at_root():
 
 
 def test_chat_endpoint_handles_insufficient_credits_gracefully(monkeypatch):
-    """Real bug caught via manual UI testing against OpenRouter: an unhandled 402 used to
-    propagate as an unhandled exception (blank/broken response in the UI) instead of a
-    clean error the frontend can render. This is the regression test for the fix."""
+    """A 402 used to propagate unhandled, leaving the UI with nothing to render."""
     def raise_402(*args, **kwargs):
         raise APIStatusError("Insufficient credits", response=_fake_response(402), body=None)
 
@@ -64,9 +62,8 @@ def test_chat_endpoint_handles_rate_limit_gracefully(monkeypatch):
 
 
 def test_chat_endpoint_generates_session_id_when_none_given(monkeypatch):
-    """No live LLM call needed here - this just checks the session plumbing in main.py,
-    not whether the model actually uses the history correctly (that's covered live in
-    test_router.py::test_conversational_memory_uses_prior_context)."""
+    """Session plumbing only; whether the model uses the history is covered live in
+    test_router.py::test_conversational_memory_uses_prior_context."""
     def fake_chat(client, message, messages=None, **kwargs):
         history = messages or []
         return {"answer": "ok", "source": "llm", "tool_calls": [], "messages": history + [{"role": "user", "content": message}]}
@@ -104,9 +101,7 @@ def test_chat_endpoint_reuses_and_extends_session_history(monkeypatch):
 
 
 def test_stream_endpoint_emits_sse_events_and_persists_session(monkeypatch):
-    """The streaming transport must produce the same routing decision and session
-    behaviour as /chat - only the delivery differs. Driven with a fake generator so this
-    stays a non-live test."""
+    """Streaming must match /chat's routing and session behaviour; only delivery differs."""
     def fake_stream(client, message, messages=None, **kwargs):
         yield {"type": "tool", "name": "search_knowledge_base"}
         yield {"type": "token", "text": "Cabin "}

@@ -1,19 +1,10 @@
-"""Validate the LLM judge before trusting any number it produces.
+"""Validate the judge before trusting its numbers - an untested judge is a keyword check
+that costs more and sounds better.
 
-A judge you have not tested is a keyword check with better public relations: more
-expensive, more convincing, and not demonstrably more correct. This script builds a small
-labelled set covering the exact failure modes the substring check got wrong, and asserts
-the judge separates them.
-
-The evidence is real - captured from an actual run of the assistant - while the answers are
-constructed, so each case has a known correct verdict:
-
-  good_answer            faithful, relevant, no abstention      (real system output)
-  hallucination          invented compensation figure           -> faithfulness must drop
-  unwarranted_abstention "couldn't find it" with evidence present -> flag must fire
-  correct_abstention     "couldn't find it" with NO evidence      -> flag must NOT fire
-  correct_negation       "you are NOT eligible"                   -> must stay faithful
-                         (this is the case the keyword check misjudged)
+Five labelled cases, real evidence with constructed answers so each verdict is known:
+a good answer, an invented-compensation hallucination, an abstention with evidence present
+(flag must fire), an abstention with none (must not fire), and a correctly-negated answer -
+the case the substring check got backwards.
 
 Usage: python -m eval.validate_judge
 """
@@ -72,9 +63,8 @@ CASES = [
         "answer": ("Your flight AH1235 has been cancelled. You are entitled to EUR 600 in "
                    "compensation, which will be paid into your account within 7 working days, "
                    "plus a complimentary hotel night and a 20% discount on your next booking."),
-        # Relevance is deliberately not asserted here. An answer can be squarely on-topic and
-        # entirely invented; grading its relevance is ambiguous and not what this case tests.
-        # The signal that matters is faithfulness collapsing, which is asserted.
+        # Relevance not asserted: an answer can be on-topic and entirely invented. Only
+        # the faithfulness collapse matters here.
         "expect": {"faithfulness": "low", "answer_relevance": "n/a", "abstention": False},
     },
     {

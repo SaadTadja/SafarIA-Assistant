@@ -1,45 +1,21 @@
-"""LLM-as-judge scoring for answer quality, replacing the keyword grounding check.
+"""LLM-as-judge scoring, replacing a keyword grounding check that failed both ways: it
+flagged "you would *not* be eligible for a refund" as a hallucination, and passed
+"I couldn't find the refund policy" on a scenario whose keyword was "refund".
 
-Why this exists
----------------
-`run_eval.py`'s original grounding check is `any(keyword in answer)`. That has now failed
-in both directions on this project:
+Three axes, scored against the evidence the model actually saw: faithfulness (claims
+supported by context), answer_relevance (addresses the question vs deflects), and
+unwarranted_abstention (claims ignorance while the context held the answer).
 
-  - false alarm: "you would *not* be eligible for a refund" was flagged as a hallucination,
-    because it contains the substring "eligible for a refund";
-  - false pass:  "I couldn't find specific information regarding the refund policy" scored
-    as a *pass* on a scenario whose keyword was "refund", while that scenario was in fact
-    failing four times in five.
-
-Substring presence is not groundedness, and no keyword list fixes that.
-
-What this measures, and what it deliberately does not
------------------------------------------------------
-Three axes, scored per answer against the evidence the model actually saw:
-
-  faithfulness         - is every factual claim supported by the tool output / retrieved
-                         context? Catches invented fees, dates, entitlements.
-  answer_relevance     - does the answer address the question that was asked, rather than
-                         deflecting to "contact customer support"?
-  unwarranted_abstention - does the answer claim ignorance *even though* the context in
-                         front of it contained the answer?
-
-An important scoping note, because it is easy to overclaim here: this judge sees
-(question, context, answer) and therefore grades *generation*, not *retrieval*. The
-flagship bug found in this project - the router sending 'refund policy' to the knowledge
-base, scoring 0.464, and retrieval returning found=False - is invisible from this vantage
-point. Given empty context, "I couldn't find that information" is the correct answer and
-any honest judge will score it well. That failure is a retrieval-side problem and is
-caught by the expanded 26-query robustness set, not here. `unwarranted_abstention` catches
-the neighbouring generation-side failure: context was present and the model ignored it.
+Scope: it sees (question, context, answer), so it grades generation, not retrieval. Given
+empty context, "I couldn't find that" is correct and scores well - retrieval failures are
+caught by eval/robustness_eval.py instead.
 """
 
 import json
 
 from app.router import call_with_retry
 
-# Deliberately not MODEL_NAME. A model grading its own output is measurably lenient toward
-# it; the judge must be a different, and preferably stronger, model than the one under test.
+# Not MODEL_NAME: a model grading its own output is lenient toward it.
 JUDGE_MODEL = "anthropic/claude-haiku-4.5"
 
 JUDGE_SYSTEM = """You grade an airline assistant's answers. You are strict and literal.
@@ -101,8 +77,7 @@ def judge_answer(client, question: str, tool_results: list[dict], answer: str,
         max_tokens=400,
     )
     raw = (response.choices[0].message.content or "").strip()
-    # Judges wrap JSON in prose or fences often enough that this is worth handling rather
-    # than losing the sample.
+    # Judges wrap JSON in prose or fences often enough to be worth handling.
     if "```" in raw:
         raw = raw.split("```")[1].removeprefix("json").strip()
     start, end = raw.find("{"), raw.rfind("}")

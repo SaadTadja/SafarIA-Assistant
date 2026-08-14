@@ -1,24 +1,8 @@
-"""A 31-scenario routing set, replacing n=6 as the basis for routing accuracy.
+"""31 routing scenarios, for a resolution of 3.2% per case instead of the 16.7% that the
+brief's 6 allow. Those 6 are still reported separately in run_eval.py.
 
-Why this exists
----------------
-Routing accuracy was measured on the brief's 6 example scenarios. At that size each
-scenario is worth 16.7%, so "83.3% versus 100%" is a one-case difference and no change
-smaller than a sixth of the set is detectable at all. Measuring the same config twice on
-this project moved aggregate judge scores by up to 0.166 - larger than most effects worth
-detecting. 31 scenarios put the resolution at 3.2%.
-
-The brief's own 6 remain in `run_eval.py` and are still reported separately; this set is
-additive, not a replacement for them.
-
-Coverage is deliberately weighted toward where routing is actually hard: policy questions
-that must not trigger a data tool, data questions that must not trigger retrieval, hybrids
-needing both, and conversational turns needing neither. Queries are phrased the way users
-write - including French, terse phrasings, and questions that name a flight while asking a
-policy question, which is exactly the shape that broke retrieval before normalization.
-
-`expected_source` uses run_eval.py's convention: tool names joined by '+', 'rag' for
-search_knowledge_base, 'llm' when no tool should be called.
+expected_source follows run_eval.py: tool names joined by '+', 'rag' for
+search_knowledge_base, 'llm' when nothing should be called.
 """
 
 # (query, expected_source)
@@ -49,9 +33,7 @@ ROUTING_SCENARIOS = [
     ("What timezone is ALG airport in?", "get_airport_info"),
     ("Tell me about Casablanca CMN airport.", "get_airport_info"),
 
-    # --- rag (7) ---
-    # The last two name a flight while asking a policy question - the shape that produced
-    # identifier-bearing retrieval queries and a rejected gate before normalization.
+    # --- rag (7) --- the last names a flight while asking a policy question
     ("What are the cabin baggage rules?", "rag"),
     ("How much does excess baggage cost?", "rag"),
     ("Do I need a visa to travel to Europe?", "rag"),
@@ -60,12 +42,12 @@ ROUTING_SCENARIOS = [
     ("What is the refund policy if I cancel my own ticket?", "rag"),
     ("I'm flying on AH1009 - what's the checked baggage allowance?", "rag"),
 
-    # --- hybrid: dynamic state first, then policy (3) ---
+    # --- hybrid: state first, then policy (3) ---
     ("My flight AH1235 is cancelled. Can I get a refund?", "get_flight_status+rag"),
     ("AH1235 got cancelled - what are my rebooking options?", "get_flight_status+rag"),
     ("Is AH1235 cancelled, and if so what compensation applies?", "get_flight_status+rag"),
 
-    # --- llm only: no tool should fire (3) ---
+    # --- llm only: nothing should fire (3) ---
     ("Hello, who are you?", "llm"),
     ("Thanks, that was helpful!", "llm"),
     ("Bonjour, que peux-tu faire ?", "llm"),

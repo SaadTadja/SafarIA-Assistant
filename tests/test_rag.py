@@ -1,7 +1,4 @@
-"""Retrieval quality checks: does the confidence gate correctly separate relevant
-from irrelevant chunks? This is Recall@K / the confidence-threshold behavior from
-the notebooks, turned into an automated test instead of eyeballed scores.
-"""
+"""Retrieval quality: does the confidence gate separate relevant chunks from irrelevant?"""
 
 import pytest
 
@@ -61,13 +58,11 @@ def test_out_of_scope_query_is_rejected(index: RagIndex):
 
 
 def test_retrieval_is_robust_to_query_form(index: RagIndex):
-    """Guards the failure class that shipped undetected: retrieval measured 100% Hit@1 on
-    a set of well-formed questions while the router was sending it terse keyword queries
-    that the confidence gate rejected.
+    """Guards the failure that shipped undetected: 100% Hit@1 on well-formed questions
+    while the router sent terse queries the gate rejected.
 
-    Thresholds sit below the measured values (Hit@1 0.923, gate 0.885) rather than at them,
-    so this fails on a real regression instead of on noise. Retrieval is deterministic - no
-    LLM is involved - so these numbers do not drift between runs.
+    Floors sit below the measured values (0.923 / 0.885 / 0.833) so a real regression
+    fails rather than noise; retrieval is deterministic, so nothing drifts.
     """
     from eval.robustness_eval import evaluate
 
@@ -75,8 +70,5 @@ def test_retrieval_is_robust_to_query_form(index: RagIndex):
 
     assert report["overall"]["hit_rate_at_1"] >= 0.85, report["failures"]
     assert report["overall"]["gate_pass_rate"] >= 0.80, report["failures"]
-    # Identifier-bearing queries were the worst case: 16.7% gate pass before query
-    # normalization stripped record locators absent from the corpus, 83.3% after.
     assert report["by_form"]["identifier"]["gate_pass_rate"] >= 0.70, report["failures"]
-    # The gate's whole purpose. This one is asserted at full strength deliberately.
-    assert report["out_of_scope"]["rejection_rate"] == 1.0
+    assert report["out_of_scope"]["rejection_rate"] == 1.0  # the gate's whole purpose

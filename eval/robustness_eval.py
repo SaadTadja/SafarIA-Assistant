@@ -1,23 +1,13 @@
-"""Retrieval robustness across query *forms*, not just query topics.
+"""Retrieval robustness across query *forms*, not just topics.
 
-The original 9-query set in run_eval.py is entirely well-formed questions ("Can I get a
-refund if my flight is cancelled?"). The router does not write questions like that - asked
-the brief's flagship question it produced the query 'refund policy', which scores 0.464 and
-was rejected by the confidence gate while 59 refund chunks sat in the corpus. Retrieval
-measured 100% Hit Rate@1 while the flagship scenario failed four times in five, because the
-evaluated query distribution was not the produced one.
+run_eval.py's 9 queries are all well-formed questions. The router doesn't write those - it
+produced 'refund policy', which scores 0.464 and was gate-rejected while 59 refund chunks
+sat in the corpus. Hit Rate@1 read 100% while the flagship scenario failed 4 times in 5.
 
-This set therefore varies the *form* while holding the topics constant:
+Three forms over the same topics: sentence (control), terse, identifier-bearing. Plus 10
+out-of-scope queries instead of run_eval.py's one.
 
-  sentence    - the original distribution, kept as a control
-  terse       - keyword-style queries, which is what an unconstrained router emits
-  identifier  - queries carrying a flight number or booking reference
-
-Out-of-scope coverage is 10 queries rather than the single query run_eval.py uses, so the
-rejection rate means something.
-
-Requires no API key - retrieval is entirely local.
-Usage: python -m eval.robustness_eval
+No API key needed. Usage: python -m eval.robustness_eval
 """
 
 import json
@@ -66,8 +56,7 @@ OUT_OF_SCOPE = [
     "Quel temps fait-il a Paris aujourd'hui ?",
     "What is the capital of Japan?",
     "Who won the World Cup in 2022?",
-    # Documented in tests/test_rag.py as a hard case for the bi-encoder; the cross-encoder
-    # now scores it well below the gate, so it is included here rather than excluded.
+    # Was a hard case pre-reranker; now scores 0.025, so it belongs here.
     "What is the aircraft's maximum cruising altitude?",
     "How do I cook a tagine?",
     "What is the stock price of Royal Air Maroc?",

@@ -32,12 +32,12 @@ RULE_HEADER_RE = re.compile(r"^Rule (\d+) (.+)$")
 
 
 def split_into_rule_blocks(combined: str) -> list[tuple[str, str]]:
-    """Every page repeats its rule's title as a running header (e.g. 'Rule 87 Denied
-    Boarding Compensation' appears on every page of that rule, not just the first). A
-    naive split on any header line would create a spurious new block per page. Instead,
-    track the current rule number and only start a new block when it actually changes -
-    the running-header line itself is always dropped from the content either way.
-    Returns a list of (title, body) tuples, one per rule."""
+    """Split into (title, body) per rule.
+
+    Each page repeats its rule title as a running header, so splitting on any header line
+    would yield one spurious block per page. Track the rule number and split only when it
+    changes; the header line is dropped either way.
+    """
     current_rule_num = None
     current_title = None
     blocks: list[list[str]] = []
@@ -60,11 +60,9 @@ def split_into_rule_blocks(combined: str) -> list[tuple[str, str]]:
     return list(zip(titles, ["\n".join(b) for b in blocks]))
 
 
-# A short, all-caps, standalone line like "(A)  CONDITIONS FOR PAYMENT OF COMPENSATION"
-# is a genuine sub-heading in this document; a marker like "(1)  PASSENGER HOLDING A
-# TICKET FOR..." that continues into substantive prose on the same and following lines is
-# not. Both use "(letter/digit)" markers, so headings are told apart by being short,
-# standalone, and free of sentence punctuation.
+# "(A)  CONDITIONS FOR PAYMENT" is a heading; "(1)  PASSENGER HOLDING A TICKET FOR..."
+# continuing into prose is not. Both use the same marker, so headings are told apart by
+# being short, standalone and free of sentence punctuation.
 SUBHEADING_RE = re.compile(r"^\([A-Za-z0-9]+\)\s{2,}[A-Z][A-Z0-9 ,/\-]*$")
 
 
