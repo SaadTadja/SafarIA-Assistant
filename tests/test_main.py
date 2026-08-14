@@ -2,6 +2,8 @@
 the endpoint contract (request/response shape, validation) matches what the brief specifies.
 """
 
+import json
+
 import httpx
 from openai import APIStatusError, RateLimitError
 from fastapi.testclient import TestClient
@@ -99,3 +101,50 @@ def test_chat_endpoint_reuses_and_extends_session_history(monkeypatch):
         {"role": "user", "content": "My flight is AH1235"},
         {"role": "assistant", "content": "ok"},
     ]
+
+
+def test_stream_endpoint_emits_sse_events_and_persists_session(monkeypatch):
+    """The streaming transport must produce the same routing decision and session
+    behaviour as /chat - only the delivery differs. Driven with a fake generator so this
+    stays a non-live test."""
+    def fake_stream(client, message, messages=None, **kwargs):
+        yield {"type": "tool", "name": "search_knowledge_base"}
+        yield {"type": "token", "text": "Cabin "}
+        yield {"type": "token", "text": "baggage is 8kg."}
+        yield {"type": "done", "answer": "Cabin baggage is 8kg.", "source": "rag",
+               "messages": [{"role": "assistant", "content": "Cabin baggage is 8kg."}]}
+
+    monkeypatch.setattr(main_module, "router_chat_stream", fake_stream)
+
+    with client.stream("POST", "/chat/stream", json={"message": "baggage?"}) as response:
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        events = [json.loads(line[6:]) for line in response.iter_lines()
+                  if line.startswith("data: ")]
+
+    assert [e["type"] for e in events] == ["tool", "token", "token", "done"]
+    # Tokens must reassemble into exactly the final answer, or the UI shows something
+    # different from what the badge claims was produced.
+    assert "".join(e["text"] for e in events if e["type"] == "token") == events[-1]["answer"]
+    assert events[-1]["source"] == "rag"
+    assert events[-1]["session_id"]
+    # "messages" is server state for the next turn, not something a browser should receive.
+    assert "messages" not in events[-1]
+
+
+def test_stream_endpoint_reports_provider_errors_as_events(monkeypatch):
+    """A streamed response has already committed HTTP 200 by the time a provider fails,
+    so the failure has to arrive as an event rather than a status code."""
+    def raise_402(client, message, messages=None, **kwargs):
+        raise APIStatusError("Insufficient credits", response=_fake_response(402), body=None)
+        yield  # pragma: no cover - makes this a generator
+
+    monkeypatch.setattr(main_module, "router_chat_stream", raise_402)
+
+    with client.stream("POST", "/chat/stream", json={"message": "hi"}) as response:
+        assert response.status_code == 200
+        events = [json.loads(line[6:]) for line in response.iter_lines()
+                  if line.startswith("data: ")]
+
+    assert events[-1]["type"] == "error"
+    assert "credits" in events[-1]["detail"]

@@ -609,28 +609,74 @@ async function sendMessage(message) {
   addTypingIndicator();
 
   try {
-    const response = await fetch('/chat', {
+    const response = await fetch('/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, session_id: sessionId }),
     });
 
-    removeTypingIndicator();
-
     if (!response.ok) {
+      removeTypingIndicator();
       const detail = await response.json().catch(() => ({}));
       const row = addRow('bot', detail.detail || `Error: ${response.status}`);
       row.querySelector('.bubble').classList.add('error');
       return;
     }
 
-    const data = await response.json();
-    sessionId = data.session_id;
-    const row = addRow('bot', data.answer);
-    const badge = document.createElement('div');
-    badge.className = 'badge ' + classifySource(data.source);
-    badge.textContent = formatSourceLabel(data.source);
-    row.appendChild(badge);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let answer = '';
+    let row = null;
+    let bubble = null;
+
+    // The typing indicator is only removed once the first token arrives, so a long
+    // tool-calling turn - which streams no text at all - still shows something.
+    const ensureBubble = () => {
+      if (!row) {
+        removeTypingIndicator();
+        row = addRow('bot', '');
+        bubble = row.querySelector('.bubble');
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // An SSE event ends at a blank line. A partial event stays in the buffer until the
+      // rest of it arrives - chunk boundaries do not respect message boundaries.
+      const events = buffer.split('\n\n');
+      buffer = events.pop();
+
+      for (const raw of events) {
+        const line = raw.split('\n').find(l => l.startsWith('data: '));
+        if (!line) continue;
+        let event;
+        try { event = JSON.parse(line.slice(6)); } catch { continue; }
+
+        if (event.type === 'token') {
+          ensureBubble();
+          answer += event.text;
+          bubble.innerHTML = renderMarkdown(answer);
+          chat.parentElement.scrollTop = chat.parentElement.scrollHeight;
+        } else if (event.type === 'error') {
+          ensureBubble();
+          bubble.textContent = event.detail;
+          bubble.classList.add('error');
+        } else if (event.type === 'done') {
+          ensureBubble();
+          sessionId = event.session_id;
+          bubble.innerHTML = renderMarkdown(event.answer);
+          const badge = document.createElement('div');
+          badge.className = 'badge ' + classifySource(event.source);
+          badge.textContent = formatSourceLabel(event.source);
+          row.appendChild(badge);
+        }
+      }
+    }
+    removeTypingIndicator();
   } catch (err) {
     removeTypingIndicator();
     const row = addRow('bot', 'Could not reach the server. Is it running?');

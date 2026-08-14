@@ -22,6 +22,7 @@ free again).
 """
 
 import json
+import logging
 import time
 from datetime import date
 
@@ -239,6 +240,144 @@ def call_with_retry(
                 raise
 
 
+logger = logging.getLogger("safaria")
+
+
+def log_turn(**fields) -> None:
+    """One structured JSON line per completed turn.
+
+    The project already surfaced the routing decision as a badge in the UI, which is the
+    user-facing half of observability but leaves nothing to grep or aggregate after the
+    fact. This adds the operator-facing half: routing decision, tools called, token counts,
+    latency and transport, on a dedicated 'safaria' logger so it can be filtered or shipped
+    without touching uvicorn's own output.
+
+    Deliberately not logging the message or answer text - it is user content, and a policy
+    assistant's transcripts are not something to write to disk by default.
+    """
+    logger.info(json.dumps({"event": "turn", **fields}, ensure_ascii=False, default=str))
+
+
+def summarize_source(calls_made: list[str]) -> str:
+    """The routing decision as a label: tool names joined by '+', 'rag' for the knowledge
+    base, 'llm' when nothing was called. Shared by chat() and chat_stream() so the badge
+    shown in the UI cannot depend on which transport produced the answer."""
+    labels = ["rag" if name == "search_knowledge_base" else name for name in calls_made]
+    return "+".join(dict.fromkeys(labels)) if labels else "llm"
+
+
+def _accumulate_tool_call_deltas(pending: dict, delta_tool_calls) -> None:
+    """Reassemble tool calls arriving in fragments across streamed chunks.
+
+    A streamed tool call is split arbitrarily: the name may land in one chunk and the JSON
+    arguments across several more. Fragments are keyed by their index in the response, not
+    by id, because the id itself only appears in the first fragment.
+    """
+    for fragment in delta_tool_calls:
+        slot = pending.setdefault(fragment.index, {"id": None, "name": None, "arguments": ""})
+        if fragment.id:
+            slot["id"] = fragment.id
+        if fragment.function and fragment.function.name:
+            slot["name"] = fragment.function.name
+        if fragment.function and fragment.function.arguments:
+            slot["arguments"] += fragment.function.arguments
+
+
+def chat_stream(
+    client: openai.OpenAI,
+    message: str,
+    messages: list[dict] | None = None,
+    max_tool_calls: int = 4,
+):
+    """Streaming counterpart to chat(), yielding events as the answer is produced.
+
+    Every turn is streamed, including the ones that turn out to be tool calls. That needs
+    no lookahead: a tool-call turn simply carries no content deltas, so nothing is emitted
+    for it and the loop proceeds exactly as the non-streaming version does.
+
+    Yields dicts:
+      {"type": "tool",  "name": str}   a tool is about to run (lets the UI say why it waited)
+      {"type": "token", "text": str}   a fragment of the final answer
+      {"type": "done",  "answer", "source", "messages"}
+
+    chat() is deliberately left intact rather than reimplemented on top of this: it is what
+    the test suite and eval scripts exercise, and a streamed transport is not worth
+    destabilising them for.
+    """
+    if messages is None:
+        messages = [{"role": "system", "content": build_system_instruction()}]
+    messages = messages + [{"role": "user", "content": message}]
+
+    calls_made: list[str] = []
+    final_answer = ""
+    started = time.perf_counter()
+
+    for _ in range(max_tool_calls):
+        stream = call_with_retry(
+            client.chat.completions.create,
+            model=MODEL_NAME,
+            messages=messages,
+            tools=TOOLS_SCHEMA,
+            max_tokens=500,
+            stream=True,
+        )
+
+        content_parts: list[str] = []
+        pending_tool_calls: dict[int, dict] = {}
+
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta.content:
+                content_parts.append(delta.content)
+                yield {"type": "token", "text": delta.content}
+            if delta.tool_calls:
+                _accumulate_tool_call_deltas(pending_tool_calls, delta.tool_calls)
+
+        content = "".join(content_parts)
+
+        if not pending_tool_calls:
+            final_answer = content or final_answer
+            break
+
+        tool_calls = [
+            {"id": c["id"], "type": "function",
+             "function": {"name": c["name"], "arguments": c["arguments"] or "{}"}}
+            for _index, c in sorted(pending_tool_calls.items())
+        ]
+        assistant_message = {"role": "assistant", "tool_calls": tool_calls}
+        if content:
+            assistant_message["content"] = content
+        messages.append(assistant_message)
+
+        for call in tool_calls:
+            tool_name = call["function"]["name"]
+            calls_made.append(tool_name)
+            yield {"type": "tool", "name": tool_name}
+
+            tool_args = json.loads(call["function"]["arguments"])
+            tool_result = ALL_TOOLS[tool_name](**tool_args)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call["id"],
+                "content": json.dumps(tool_result, ensure_ascii=False, default=str),
+            })
+
+    if not final_answer:
+        final_answer = "Sorry, I couldn't complete this request."
+        yield {"type": "token", "text": final_answer}
+
+    messages.append({"role": "assistant", "content": final_answer})
+    source = summarize_source(calls_made)
+    # Token counts are unavailable here: streamed responses carry no usage block unless
+    # stream_options is requested, and asking for it is not worth an extra round trip.
+    log_turn(transport="stream", source=source, tools=calls_made,
+             latency_ms=round((time.perf_counter() - started) * 1000),
+             answer_chars=len(final_answer))
+    yield {"type": "done", "answer": final_answer, "source": source, "messages": messages}
+
+
 def chat(
     client: openai.OpenAI,
     message: str,
@@ -255,6 +394,8 @@ def chat(
 
     calls_made: list[str] = []
     final_answer = "Sorry, I couldn't complete this request."
+    started = time.perf_counter()
+    prompt_tokens = completion_tokens = 0
 
     for _ in range(max_tool_calls):
         response = call_with_retry(
@@ -264,6 +405,10 @@ def chat(
             tools=TOOLS_SCHEMA,
             max_tokens=500,  # answers are short; also keeps cost/latency predictable
         )
+        if response.usage:
+            prompt_tokens += response.usage.prompt_tokens
+            completion_tokens += response.usage.completion_tokens
+
         message_obj = response.choices[0].message
         messages.append(message_obj.model_dump(exclude_none=True))
 
@@ -287,7 +432,10 @@ def chat(
                 "content": json.dumps(tool_result, ensure_ascii=False, default=str),
             })
 
-    labels = ["rag" if name == "search_knowledge_base" else name for name in calls_made]
-    source = "+".join(dict.fromkeys(labels)) if labels else "llm"
-
-    return {"answer": final_answer, "source": source, "tool_calls": calls_made, "messages": messages}
+    source = summarize_source(calls_made)
+    log_turn(transport="json", source=source, tools=calls_made,
+             latency_ms=round((time.perf_counter() - started) * 1000),
+             prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+             answer_chars=len(final_answer))
+    return {"answer": final_answer, "source": source,
+            "tool_calls": calls_made, "messages": messages}

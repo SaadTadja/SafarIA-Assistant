@@ -16,6 +16,7 @@ one of the category folders adds more retrievable chunks without touching what's
 tested and working in app/docs/.
 """
 
+import hashlib
 import math
 import re
 from pathlib import Path
@@ -53,6 +54,41 @@ CONFIDENCE_THRESHOLD = 0.4
 # (ABC123) - but also genuine corpus vocabulary (EU261, B737, B787, E190), which is why
 # _normalize_query only strips the ones absent from the corpus rather than all of them.
 IDENTIFIER_TOKEN_RE = re.compile(r"\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{4,}\b")
+
+EMBEDDING_CACHE_DIR = APP_DIR.parent / ".embedding_cache"
+
+
+def _load_or_build_embeddings(model, texts: list[str], model_name: str):
+    """Encode the corpus, reusing a cached matrix when nothing relevant has changed.
+
+    Encoding 312 chunks costs most of the ~15 s startup, paid on every boot, every test
+    session and every --reload. The cache key is a hash of the model name and the corpus
+    text itself, so editing a document or switching embedding models misses the cache and
+    re-encodes: correctness does not depend on remembering to clear anything.
+
+    A corrupt or unreadable cache file is not fatal - it re-encodes and overwrites.
+    """
+    digest = hashlib.sha256(
+        ("\x00".join([model_name, *texts])).encode("utf-8")
+    ).hexdigest()[:16]
+    cache_path = EMBEDDING_CACHE_DIR / f"{digest}.npy"
+
+    if cache_path.exists():
+        try:
+            cached = np.load(cache_path)
+            if cached.shape[0] == len(texts):
+                return cached
+        except (OSError, ValueError):
+            pass  # fall through and re-encode
+
+    embeddings = model.encode(texts, normalize_embeddings=True)
+    try:
+        EMBEDDING_CACHE_DIR.mkdir(exist_ok=True)
+        np.save(cache_path, embeddings)
+    except OSError:
+        pass  # a read-only deployment still works, just without the speedup
+    return embeddings
+
 
 SECTION_HEADING_RE = re.compile(r"(?m)^##\s+")
 BLANK_LINE_RE = re.compile(r"\n\s*\n")
@@ -185,7 +221,7 @@ class RagIndex:
         self.model = SentenceTransformer(model_name)
         self.reranker = CrossEncoder(reranker_model_name)
         texts = [c["text"] for c in chunks]
-        self.embeddings = self.model.encode(texts, normalize_embeddings=True)
+        self.embeddings = _load_or_build_embeddings(self.model, texts, model_name)
         # Identifier-shaped tokens the corpus actually uses, so _normalize_query can tell
         # real vocabulary (EU261, B737) from a caller's record locator (AH1235, ABC123).
         self.corpus_identifiers = {

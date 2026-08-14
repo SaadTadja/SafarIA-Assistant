@@ -463,6 +463,44 @@ def evaluate_extended_scenarios(client) -> dict:
     }
 
 
+def evaluate_routing_at_scale(client) -> dict:
+    """Routing accuracy over eval/routing_set.py's 31 scenarios rather than the brief's 6.
+
+    At n=6 one scenario is worth 16.7%, which is coarser than most differences worth
+    detecting; 31 puts the resolution at 3.2%. Reported per category as well as overall,
+    because an aggregate hides which routing decision is actually weak.
+    """
+    from .routing_set import CATEGORY_OF, ROUTING_SCENARIOS
+
+    correct = 0
+    by_category = {}
+    misroutes = []
+
+    for query, expected in ROUTING_SCENARIOS:
+        result = run_query(client, query)
+        time.sleep(1)
+        ok = result["source"] == expected
+        correct += ok
+
+        category = CATEGORY_OF[expected]
+        stats = by_category.setdefault(category, {"n": 0, "correct": 0})
+        stats["n"] += 1
+        stats["correct"] += ok
+
+        if not ok:
+            misroutes.append({"query": query, "expected": expected, "got": result["source"]})
+
+    n = len(ROUTING_SCENARIOS)
+    return {
+        "n": n,
+        "routing_accuracy": round(correct / n, 3),
+        "resolution_per_scenario": round(1 / n, 3),
+        "by_category": {c: {"n": s["n"], "accuracy": round(s["correct"] / s["n"], 3)}
+                        for c, s in sorted(by_category.items())},
+        "misroutes": misroutes,
+    }
+
+
 def main():
     api_key = os.environ["OPENROUTER_API_KEY"]
     client = build_client(api_key)
@@ -471,6 +509,7 @@ def main():
     report = {
         "rag": evaluate_rag(index),
         "router": evaluate_router(client),
+        "routing_at_scale": evaluate_routing_at_scale(client),
         "extended": evaluate_extended_scenarios(client),
     }
 
