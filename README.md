@@ -56,7 +56,7 @@ Le modèle est `openai/gpt-4o-mini`, interchangeable via `MODEL_NAME` dans `rout
 Interface sur http://127.0.0.1:8000/ — chaque réponse porte un badge indiquant sa `source`.
 
 ```bash
-pytest                           # 42 tests ; ceux en direct sont ignorés sans clé API
+pytest                           # 42 tests ; sans clé API : 31 passent, 11 ignorés
 python -m eval.run_eval          # routage, juge, coût — nécessite une clé
 python -m eval.robustness_eval   # récupération seule, aucune clé nécessaire
 ```

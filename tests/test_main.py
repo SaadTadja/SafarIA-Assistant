@@ -3,6 +3,7 @@
 import json
 
 import httpx
+import pytest
 from openai import APIStatusError, RateLimitError
 from fastapi.testclient import TestClient
 
@@ -10,6 +11,18 @@ import app.main as main_module
 from app.main import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _stub_client(monkeypatch):
+    """Neutralise get_client so these stay genuinely non-live.
+
+    Both endpoints call get_client() before anything else, and it raises 503 when
+    OPENROUTER_API_KEY is unset - so every test below returned 503 instead of what it
+    asserted on any machine without a .env. They passed only where a key happened to be
+    configured, which is exactly the environment a reviewer will not have.
+    """
+    monkeypatch.setattr(main_module, "get_client", lambda: object())
 
 
 def _fake_response(status_code: int) -> httpx.Response:
