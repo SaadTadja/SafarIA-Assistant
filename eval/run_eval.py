@@ -1,16 +1,10 @@
-"""Computes real values for the evaluation metrics described in README.md, using actual
-retrieval scores and live API calls rather than eyeballed estimates.
+"""Computes the evaluation metrics in README.md from real retrieval scores and live API
+calls: retrieval quality, routing at two scales, and LLM-judged answer quality.
 
-Some metrics from the original evaluation framework (NDCG, per-chunk Recall@K) aren't
-computed here because they require full relevance judgments across the entire corpus
-(which document of every chunk is/isn't relevant to every query) - that labeling doesn't
-exist yet for this small starter corpus, and fabricating those numbers would be worse than
-omitting them. What's reported here is only what can be measured directly from this test set.
+NDCG and per-chunk Recall@K are not computed - they need full relevance judgments across
+the corpus, which don't exist here, and inventing them would be worse than omitting them.
 
-Usage: OPENROUTER_API_KEY must be set (via .env or environment). Free to run - uses
-OpenRouter's free-tier nvidia/nemotron-nano-9b-v2:free model (see app/router.py's module
-docstring for why - the paid providers tried so far both required funds this project
-doesn't currently have).
+Usage: OPENROUTER_API_KEY must be set. A full run costs well under a cent.
 """
 
 import json
@@ -38,11 +32,7 @@ RAG_TEST_SET = [
     ("Comment demander une assistance en fauteuil roulant ?", "special_assistance"),
     ("Puis-je voyager avec mon animal de compagnie ?", "special_assistance"),
 ]
-# "What is the aircraft's maximum cruising altitude?" is deliberately NOT used here - it's
-# a known hard case for the multilingual embedding model (scores 0.619, above even some
-# genuine matches) with no threshold value that gets it right. It's covered instead by
-# tests/test_router.py::test_router_catches_hard_edge_case_raw_rag_misses, which checks the
-# second defense layer (the router's tool-selection judgment) independent of this score.
+# A wider out-of-scope set (10 queries) lives in eval/robustness_eval.py.
 OUT_OF_SCOPE_QUERY = "Quel temps fait-il a Paris aujourd'hui ?"
 
 
@@ -298,18 +288,12 @@ def evaluate_router(client) -> dict:
 
 # ------------------------------------------------ Extended / edge-case scenarios
 #
-# The 6 SCENARIOS above are the brief's happy-path examples - one clean case per
-# routing category. These test where the system is more likely to actually break:
-# missing data, underspecified requests, multi-tool combinations without RAG,
-# conditional reasoning over a tool result, genuinely out-of-scope requests,
-# a policy question spanning two documents, a non-English query, and two
-# adversarial prompts probing whether the system prompt holds under pressure.
+# The 6 SCENARIOS above are happy paths. These probe where it breaks: missing data,
+# underspecified requests, multi-tool combinations, out-of-scope requests, a non-English
+# query, and two prompt-injection attempts.
 #
-# expect_tools: the exact set of tools that should be called, or an empty set if
-# none should be called. None means "diagnostic only" - we report what happened
-# without asserting a fixed expectation, because there's no single correct
-# behavior to grade against (e.g. asking for clarification vs. politely
-# declining are both reasonable responses to an underspecified question).
+# expect_tools: the exact set expected, an empty set for "none", or None for
+# diagnostic-only - where asking for clarification and declining are both defensible.
 
 EXTENDED_SCENARIOS = [
     {

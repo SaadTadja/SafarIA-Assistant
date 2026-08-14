@@ -1,8 +1,11 @@
-"""Empirically determine CONFIDENCE_THRESHOLD for the current embedding model + corpus,
-instead of eyeballing it. Prints the top-1 similarity score for a set of queries that
-SHOULD match (one per category, English and French) and queries that should NOT match
-(clearly out-of-scope), so the gap between the two clusters can be read directly and a
-threshold picked from the middle of that gap.
+"""Empirically determine CONFIDENCE_THRESHOLD instead of eyeballing it.
+
+Prints the top-1 score after the full pipeline - normalization, bi-encoder, reranker - for
+queries that SHOULD match and queries that should NOT, so the gap between the two clusters
+can be read directly. Scores are on the reranker's scale, so re-run this whenever the
+embedding model, the reranker or CANDIDATE_POOL_SIZE changes.
+
+eval/robustness_eval.py covers the same ground on a larger set (26 in-scope, 10 out).
 """
 
 from app.rag import RagIndex, load_documents
