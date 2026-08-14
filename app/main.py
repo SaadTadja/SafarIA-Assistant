@@ -3,6 +3,7 @@ Also serves a simple browser UI (bonus point: "interface utilisateur simple") at
 """
 
 import json
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -17,6 +18,17 @@ from pydantic import BaseModel
 from .router import build_client, chat as router_chat, chat_stream as router_chat_stream
 
 load_dotenv()  # picks up OPENROUTER_API_KEY from a local .env file, if present
+
+# uvicorn configures its own loggers and leaves the root logger without a handler, so
+# router.py's turn logs would be dropped at INFO. Attach one here rather than requiring
+# a --log-config flag: observability that needs special invocation is not observability.
+_turn_logger = logging.getLogger("safaria")
+if not _turn_logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    _turn_logger.addHandler(_handler)
+    _turn_logger.setLevel(logging.INFO)
+    _turn_logger.propagate = False
 
 STATIC_DIR = Path(__file__).parent / "static"
 
