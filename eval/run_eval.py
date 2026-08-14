@@ -129,6 +129,9 @@ def run_query(client, query: str, max_tool_calls: int = 4) -> dict:
         {"role": "user", "content": query},
     ]
     calls: list[tuple[str, dict]] = []
+    # Everything the model was actually shown, so a judge can check the answer against the
+    # same evidence the model had rather than against the question alone.
+    tool_results: list[dict] = []
     prompt_tokens = 0
     completion_tokens = 0
     final_answer = ""
@@ -157,6 +160,7 @@ def run_query(client, query: str, max_tool_calls: int = 4) -> dict:
             args = json.loads(tool_call.function.arguments)
             calls.append((name, args))
             result = ALL_TOOLS[name](**args)
+            tool_results.append({"tool": name, "args": args, "result": result})
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
@@ -171,14 +175,48 @@ def run_query(client, query: str, max_tool_calls: int = 4) -> dict:
         "answer": final_answer,
         "source": source,
         "calls": calls,
+        "tool_results": tool_results,
         "latency": latency,
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
     }
 
 
+def _judge_accumulator():
+    """Running totals for the three LLM-judge axes (see eval/judge.py)."""
+    return {"faithfulness": [], "relevance": [], "abstentions": 0, "parse_errors": 0}
+
+
+def _judge_and_record(client, acc, query, result):
+    from .judge import judge_answer
+
+    verdict = judge_answer(client, query, result["tool_results"], result["answer"])
+    if verdict.get("parse_error"):
+        acc["parse_errors"] += 1
+        return verdict
+    acc["faithfulness"].append(verdict["faithfulness"])
+    acc["relevance"].append(verdict["answer_relevance"])
+    acc["abstentions"] += verdict["unwarranted_abstention"]
+    return verdict
+
+
+def _judge_summary(acc):
+    n = len(acc["faithfulness"])
+    if not n:
+        return {"judged": 0, "parse_errors": acc["parse_errors"]}
+    return {
+        "judged": n,
+        "mean_faithfulness": round(sum(acc["faithfulness"]) / n, 3),
+        "mean_answer_relevance": round(sum(acc["relevance"]) / n, 3),
+        "unwarranted_abstention_rate": round(acc["abstentions"] / n, 3),
+        "fully_faithful_rate": round(sum(f >= 0.99 for f in acc["faithfulness"]) / n, 3),
+        "parse_errors": acc["parse_errors"],
+    }
+
+
 def evaluate_router(client) -> dict:
     n = len(SCENARIOS)
+    judge_acc = _judge_accumulator()
     routing_correct = 0
     tool_selection_correct = 0
     arg_checks_total = 0
@@ -215,6 +253,8 @@ def evaluate_router(client) -> dict:
         answer_ok = any(kw.lower() in answer_lower for kw in scenario["answer_must_contain_any"])
         answer_kw_correct += answer_ok
 
+        verdict = _judge_and_record(client, judge_acc, scenario["query"], result)
+
         total_latency += result["latency"]
         total_prompt_tokens += result["prompt_tokens"]
         total_completion_tokens += result["completion_tokens"]
@@ -227,6 +267,8 @@ def evaluate_router(client) -> dict:
             "routing_ok": routing_ok,
             "answer_grounding_ok": answer_ok,
             "latency_sec": round(result["latency"], 2),
+            "judge": {k: verdict.get(k) for k in
+                      ("faithfulness", "answer_relevance", "unwarranted_abstention", "reason")},
         })
 
     small_talk_result = run_query(client, SMALL_TALK_QUERY)
@@ -249,6 +291,7 @@ def evaluate_router(client) -> dict:
         "avg_tool_calls_per_query": total_tool_calls / n,
         "total_cost_usd_for_this_run": cost,
         "avg_cost_usd_per_query": cost / (n + 1),
+        "judge": _judge_summary(judge_acc),
         "per_scenario": per_scenario,
     }
 
@@ -361,6 +404,7 @@ EXTENDED_SCENARIOS = [
 
 
 def evaluate_extended_scenarios(client) -> dict:
+    judge_acc = _judge_accumulator()
     results = []
     tools_graded = 0
     tools_correct = 0
@@ -394,9 +438,13 @@ def evaluate_extended_scenarios(client) -> dict:
             negative_hit = any(kw.lower() in answer_lower for kw in scenario["answer_should_not_contain_any"])
             negative_checks_violated += bool(negative_hit)
 
+        verdict = _judge_and_record(client, judge_acc, scenario["query"], result)
+
         results.append({
             "id": scenario["id"],
             "category": scenario["category"],
+            "judge": {k: verdict.get(k) for k in
+                      ("faithfulness", "answer_relevance", "unwarranted_abstention", "reason")},
             "query": scenario["query"],
             "expected_tools": sorted(scenario["expect_tools"]) if scenario["expect_tools"] is not None else "diagnostic-only",
             "called_tools": sorted(called_tools),
@@ -410,6 +458,7 @@ def evaluate_extended_scenarios(client) -> dict:
         "tool_selection_accuracy_graded_only": (tools_correct / tools_graded) if tools_graded else None,
         "positive_signal_rate": (positive_checks_passed / positive_checks_total) if positive_checks_total else None,
         "forbidden_content_violation_rate": (negative_checks_violated / negative_checks_total) if negative_checks_total else None,
+        "judge": _judge_summary(judge_acc),
         "per_scenario": results,
     }
 
