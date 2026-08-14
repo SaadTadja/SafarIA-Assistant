@@ -25,7 +25,6 @@ CANDIDATE_POOL_SIZE = 6
 # On the reranker's score scale; re-run eval/calibrate_threshold.py if either model changes.
 CONFIDENCE_THRESHOLD = 0.4
 
-# Record-locator shape: uppercase alphanumeric, 4+ chars, at least one letter and one digit.
 IDENTIFIER_TOKEN_RE = re.compile(r"\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{4,}\b")
 
 EMBEDDING_CACHE_DIR = APP_DIR.parent / ".embedding_cache"
@@ -62,10 +61,8 @@ BLANK_LINE_RE = re.compile(r"\n\s*\n")
 # Table footnote annotations, e.g. "(*) Service disponible..." - meaningless alone.
 FOOTNOTE_MARKER_RE = re.compile(r"^\(\*+\)\s")
 
-# Scraping boilerplate, filtered before chunking.
 NOISE_LINES = {"open in a new window", "image", "image alternative text"}
 
-# Folder names -> the source slugs used everywhere else.
 CATEGORY_FOLDER_TO_SOURCE = {
     "Baggage policy": "baggage_policy",
     "Refund policy": "refund_policy",
@@ -103,7 +100,6 @@ def _load_markdown_docs(docs_dir: Path) -> list[dict]:
 
 
 def _load_extra_txt_docs(extra_dir: Path) -> list[dict]:
-    """Load supplementary .txt files from Docs(for retrieving)/<Category>/*.txt."""
     chunks = []
     if not extra_dir.exists():
         return chunks
@@ -154,7 +150,6 @@ def _load_extra_txt_docs(extra_dir: Path) -> list[dict]:
 
 
 def load_documents(md_docs_dir: Path = MD_DOCS_DIR, extra_docs_dir: Path = EXTRA_DOCS_DIR) -> list[dict]:
-    """Load and chunk both document sources (see module docstring)."""
     chunks = _load_markdown_docs(md_docs_dir) + _load_extra_txt_docs(extra_docs_dir)
 
     if not chunks:
@@ -166,8 +161,6 @@ def load_documents(md_docs_dir: Path = MD_DOCS_DIR, extra_docs_dir: Path = EXTRA
 
 
 class RagIndex:
-    """Embeds a set of chunks once at startup, then answers similarity queries against them."""
-
     def __init__(
         self,
         chunks: list[dict],
@@ -197,7 +190,6 @@ class RagIndex:
         return re.sub(r"\s{2,}", " ", stripped).strip() or query
 
     def _retrieve_candidates(self, query: str, top_k: int) -> list[tuple[dict, float]]:
-        """First-pass retrieval: fast bi-encoder cosine similarity over the whole corpus."""
         query_embedding = self.model.encode([query], normalize_embeddings=True)[0]
         scores = self.embeddings @ query_embedding
         ranked_idx = np.argsort(scores)[::-1][:top_k]

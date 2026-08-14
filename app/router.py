@@ -64,14 +64,11 @@ _rag_index = RagIndex(load_documents())
 
 
 def search_knowledge_base(query: str) -> dict:
-    """Search internal airline policy documents for policy/procedure questions."""
     return _rag_index.search(query)
 
 
 ALL_TOOLS = {**TOOL_FUNCTIONS, "search_knowledge_base": search_knowledge_base}
 
-# OpenAI-compatible tool schema: {"type": "function", "function": {"name", "description",
-# "parameters"}} - a nested "function" key, unlike Anthropic's flat "input_schema" format.
 TOOLS_SCHEMA = [
     {
         "type": "function",
@@ -219,8 +216,8 @@ def log_turn(**fields) -> None:
 
 
 def summarize_source(calls_made: list[str]) -> str:
-    """Routing label: tool names joined by '+', 'rag' for the knowledge base, 'llm' if
-    nothing was called. Shared by chat() and chat_stream()."""
+    """Routing label, shared by chat() and chat_stream() so the UI badge cannot depend on
+    which transport produced the answer."""
     labels = ["rag" if name == "search_knowledge_base" else name for name in calls_made]
     return "+".join(dict.fromkeys(labels)) if labels else "llm"
 

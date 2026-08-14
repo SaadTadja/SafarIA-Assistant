@@ -1,6 +1,4 @@
-"""Unit tests for the mocked tool functions - the deterministic, no-LLM-needed part
-of the system. Fast, no API key required.
-"""
+"""Unit tests for the mocked tools: deterministic, no API key needed."""
 
 from app.tools import get_airport_info, get_booking, get_flight_status, search_flights
 

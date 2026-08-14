@@ -1,6 +1,4 @@
-"""API-shape tests for the FastAPI app: doesn't require a live LLM call, just checks
-the endpoint contract (request/response shape, validation) matches what the brief specifies.
-"""
+"""Endpoint contract tests: no live LLM call needed."""
 
 import json
 

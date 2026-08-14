@@ -58,7 +58,6 @@ _BOOKINGS_DB = {
 
 
 def search_flights(origin: str, destination: str, departure_date: str) -> dict:
-    """Search available flights between two cities on a given date."""
     return {
         "flights": [
             {
@@ -74,17 +73,14 @@ def search_flights(origin: str, destination: str, departure_date: str) -> dict:
 
 
 def get_flight_status(flight_number: str, date: str) -> dict:
-    """Status, times, terminal and gate for a specific flight."""
     return _FLIGHTS_DB.get(flight_number, {"error": f"No data found for flight {flight_number}"})
 
 
 def get_airport_info(airport_code: str) -> dict:
-    """Name, city, terminals and timezone for an IATA airport code."""
     return _AIRPORTS_DB.get(airport_code, {"error": f"No data found for airport {airport_code}"})
 
 
 def get_booking(booking_reference: str) -> dict:
-    """Booking details by reference: flight, date, passengers, class, baggage."""
     return _BOOKINGS_DB.get(booking_reference, {"error": f"No booking found for reference {booking_reference}"})
 
 

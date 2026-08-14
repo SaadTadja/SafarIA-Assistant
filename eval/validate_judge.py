@@ -84,10 +84,8 @@ CASES = [
     },
     {
         "id": "correct_negation",
-        # Needs its own question: the no-show evidence below does not answer the cancellation
-        # question the other cases use. The first version of this file reused the shared
-        # question here, and the judge correctly flagged the mismatch rather than grading the
-        # answer in isolation - which is itself a point in the judge's favour.
+        # Needs its own question: the no-show evidence does not answer the cancellation one.
+        # An earlier draft reused the shared question and the judge flagged the mismatch.
         "question": "I missed my flight and never made it to the gate. Can I get a refund?",
         "evidence": [
             {"tool": "search_knowledge_base", "args": {"query": "refund for a no-show passenger"},

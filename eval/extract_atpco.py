@@ -92,11 +92,8 @@ def split_rule_into_subsections(title: str, body: str, max_len: int = 1200) -> l
     if not pieces:
         return [f"{title}\n{body}".strip()]
 
-    # Merge tiny adjacent pieces up to max_len so we don't end up with dozens of
-    # fragment-sized chunks either - the goal is well-sized, not maximally split.
-    # Joined with a single newline (not a blank line) between merged pieces, since a
-    # blank line is what the app's loader treats as a chunk boundary - a double blank
-    # here would silently re-split what we just merged.
+    # Merge tiny adjacent pieces: the goal is well-sized chunks, not maximal splitting.
+    # Single newline, never blank - a blank line is the loader's chunk boundary.
     merged: list[str] = []
     for piece in pieces:
         if merged and len(merged[-1]) + len(piece) <= max_len:

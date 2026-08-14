@@ -47,7 +47,6 @@ Return ONLY a JSON object, no prose:
 
 
 def format_evidence(tool_results: list[dict]) -> str:
-    """Render what the model saw into something the judge can read."""
     if not tool_results:
         return "(no tools were called - the assistant answered from general conversation)"
     parts = []
