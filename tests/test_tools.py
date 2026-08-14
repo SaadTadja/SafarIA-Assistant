@@ -40,3 +40,11 @@ def test_search_flights_echoes_requested_route():
     flight = result["flights"][0]
     assert flight["origin"] == "Paris"
     assert flight["destination"] == "Algiers"
+
+
+def test_get_airport_info_returns_every_field_the_brief_lists():
+    """The brief specifies name, city, terminals, timezone and useful information."""
+    result = get_airport_info("CMN")
+    for field in ("name", "city", "terminals", "timezone", "useful_info"):
+        assert field in result, f"missing {field}"
+    assert result["useful_info"].strip()

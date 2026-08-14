@@ -27,6 +27,9 @@ and a tool to search internal policy documents (search_knowledge_base).
 Rules:
 - For questions about policies or procedures (baggage, refunds, check-in, flight changes,
   travel documents, airport services, special assistance), call search_knowledge_base.
+- This includes anything you may think you already know. Visa, passport and entry-document
+  requirements in particular must come from search_knowledge_base, never from memory:
+  they change often and a wrong answer can stop someone boarding.
 - For questions about a specific flight, booking, or airport, call the matching tool instead.
 - Some questions need both: e.g. "my flight is cancelled, can I get a refund?" requires
   checking the flight status AND searching the refund policy before answering.
@@ -105,7 +108,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "get_airport_info",
-            "description": "Get information about an airport: name, city, terminals, timezone.",
+            "description": "Get information about an airport: name, city, country, terminals, timezone, and useful practical information.",
             "parameters": {
                 "type": "object",
                 "properties": {

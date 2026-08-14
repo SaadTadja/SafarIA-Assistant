@@ -27,20 +27,36 @@ _AIRPORTS_DB = {
     "CDG": {
         "name": "Charles de Gaulle",
         "city": "Paris",
+        "country": "France",
         "terminals": ["1", "2A-2G", "3"],
         "timezone": "Europe/Paris",
+        "useful_info": (
+            "Royal Air Maroc departs from Terminal 1. Allow 45-60 minutes between "
+            "terminals via the CDGVAL shuttle. RER B connects to central Paris in "
+            "about 35 minutes."
+        ),
     },
     "ALG": {
         "name": "Houari Boumediene",
         "city": "Algiers",
+        "country": "Algeria",
         "terminals": ["1", "2"],
         "timezone": "Africa/Algiers",
+        "useful_info": (
+            "Terminal 1 handles international flights, Terminal 2 domestic. "
+            "The airport is about 20 km east of central Algiers."
+        ),
     },
     "CMN": {
         "name": "Mohammed V International Airport",
         "city": "Casablanca",
+        "country": "Morocco",
         "terminals": ["1", "2"],
         "timezone": "Africa/Casablanca",
+        "useful_info": (
+            "Royal Air Maroc's main hub, and the connecting point for most of its "
+            "network. A direct train links the airport to Casa-Voyageurs station."
+        ),
     },
 }
 
