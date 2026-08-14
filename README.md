@@ -39,7 +39,7 @@ voit jamais le texte des documents, uniquement le résultat d'un appel de récup
 | API `/chat` | `app/main.py` — plus `/chat/stream` (SSE) et `/health` |
 | Pipeline RAG | `app/rag.py` — chargement, découpage, normalisation des requêtes, récupération en deux étapes, seuil de confiance |
 | Intégration des outils | `app/tools.py` (4 outils simulés) + `app/router.py` (schémas, boucle de function calling) |
-| Tests | `tests/` — **39 tests passants** |
+| Tests | `tests/` — **40 tests passants** |
 | Interface | `app/static/index.html` — sans étape de build |
 | Évaluation | `eval/` — récupération, routage, juge LLM, robustesse |
 
@@ -56,7 +56,7 @@ Le modèle est `openai/gpt-4o-mini`, interchangeable via `MODEL_NAME` dans `rout
 Interface sur http://127.0.0.1:8000/ — chaque réponse porte un badge indiquant sa `source`.
 
 ```bash
-pytest                           # 39 tests ; ceux en direct sont ignorés sans clé API
+pytest                           # 40 tests ; ceux en direct sont ignorés sans clé API
 python -m eval.run_eval          # routage, juge, coût — nécessite une clé
 python -m eval.robustness_eval   # récupération seule, aucune clé nécessaire
 ```
@@ -93,6 +93,9 @@ produire `source: "llm"` sans aucun appel d'outil. **Taux d'appels inutiles : 0 
   peut pas faire.
 - Le seuil de confiance garantit qu'un contexte faible n'atteint jamais le modèle, ce qui
   supprime la tentation d'étirer un extrait à moitié pertinent pour en tirer une réponse.
+- Le prompt interdit explicitement de répondre de mémoire sur les documents d'entrée — visa,
+  passeport — même lorsque le modèle croit savoir. C'est une correction issue d'une mesure :
+  ces questions posées en anglais ne consultaient jamais la base (0/6), contre 6/6 après.
 - Chaque fait utilisé provient d'une sortie d'outil structurée, jamais d'un texte libre que
   le modèle aurait produit lui-même.
 - **La fidélité est mesurée par un juge LLM, et non par correspondance de mots-clés**
@@ -106,8 +109,9 @@ Mesurées, non estimées. `openai/gpt-4o-mini` ; juge sur `claude-haiku-4.5`.
 
 | Routage | |
 |---|---|
-| Précision de routage (31 scénarios) | **96,8 %** |
+| Précision de routage (31 scénarios) | **100 %** |
 | Les 6 scénarios du brief | **100 %** |
+| Les 12 exemples du brief, en français | **12/12** |
 | Sélection d'outil / extraction des arguments | **100 %** / **100 %** |
 | Appels d'outils inutiles sur small talk | **0 %** |
 | Fuites par injection de prompt | **0** |
@@ -119,18 +123,20 @@ Mesurées, non estimées. `openai/gpt-4o-mini` ; juge sur `claude-haiku-4.5`.
 | Passage du seuil de confiance (26) | **88,5 %** |
 | Rejet hors périmètre (10) | **100 %** |
 
-| Qualité des réponses (juge LLM) | |
-|---|---|
-| Fidélité moyenne | **0,94 – 0,99** |
-| Taux d'abstention injustifiée | **0 %** |
-| Validation du juge | **5/5** |
+| Qualité des réponses (juge LLM) | 6 du brief | 11 cas limites |
+|---|---|---|
+| Fidélité moyenne | **1,000** | 0,932 |
+| Réponses entièrement fidèles | **100 %** | 81,8 % |
+| Pertinence de la réponse | **1,000** | 0,609 |
+| Abstention injustifiée | **0 %** | 9,1 % |
+| Validation du juge | **5/5** | — |
 
 | Exploitation | |
 |---|---|
-| Coût par requête | **0,00030 $** |
+| Coût par requête | **0,00038 $** |
 | Latence | 2,6 – 3,2 s |
 | Démarrage (embeddings en cache) | 10,3 s, contre 18,8 s à froid |
-| Tests | **39/39** |
+| Tests | **40/40** |
 
 **Comment lire ces chiffres honnêtement :** relancer deux fois la même évaluation fait
 varier les scores agrégés du juge jusqu'à 0,166. Toute différence inférieure à cela sur une
@@ -155,13 +161,17 @@ de scénarios de routage est passé de 6 à 31 : à n=6, un seul scénario pesai
   comptait une réponse défaillante comme réussie — mais ce n'est pas une vérité terrain.
 - **Échantillons réduits.** 31 scénarios de routage, 26 requêtes de récupération, 10 hors
   périmètre. Ce sont de vraies mesures, avec de larges intervalles de confiance.
-- **Une lacune de grounding connue :** « Do I need a visa to travel to Europe ? » reçoit une
-  réponse issue des connaissances propres du modèle plutôt que du corpus. Les règles de visa
-  sont exactement le type d'information qui devrait provenir des documents ; détectée en
-  élargissant le jeu de scénarios, non corrigée.
+- **Les cas limites restent le point faible.** Sur les 11 scénarios difficiles, la pertinence
+  des réponses tombe à 0,609 : l'assistant renvoie encore vers le service client plus souvent
+  qu'il ne le devrait, et une abstention injustifiée subsiste. Les cas nominaux sont à 1,000.
 - **Les requêtes courtes se récupèrent mal.** Une requête de deux mots obtient un score quasi
   nul avec le cross-encoder, même lorsque le classement est correct. Le routeur est instruit
   de formuler des questions complètes, ce qui évite le problème en pratique sans le résoudre.
+- **Le grounding dépend du prompt, pas d'un garde-fou.** Les questions de visa en anglais
+  recevaient une réponse tirée des connaissances du modèle plutôt que du corpus — 0/6 sur deux
+  formulations, alors que la question française interrogeait bien la base. Corrigé par une
+  règle explicite (6/6 après), mais rien n'empêche structurellement la même dérive sur un
+  autre sujet : c'est une instruction, pas une contrainte.
 - **Les outils sont simulés** (`app/tools.py`), et **l'historique de conversation est en
   mémoire** — acceptable pour une démo, inadapté à un déploiement, qui nécessiterait Redis ou
   une base de données avec TTL.
