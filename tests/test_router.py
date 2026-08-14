@@ -1,10 +1,11 @@
 """Automated checks on the RAG / Tool routing decision (bonus: "tests automatiques sur le
 choix RAG / Tool"): the brief's 6 scenarios, plus small talk that must call nothing, an
-edge case the confidence threshold alone cannot reject, and conversational memory.
+edge case the confidence threshold alone cannot reject, conversational memory, and
+entry-document questions that must never be answered from the model's own knowledge.
 
-Makes real API calls, so it skips automatically without OPENROUTER_API_KEY. All 9 pass on
-the current model. A broader 31-scenario set lives in eval/routing_set.py - kept out of the
-suite so `pytest` stays fast; run it with `python -m eval.run_eval`.
+Makes real API calls, so it skips automatically without OPENROUTER_API_KEY. A broader
+31-scenario set lives in eval/routing_set.py - kept out of the suite so `pytest` stays
+fast; run it with `python -m eval.run_eval`.
 """
 
 import os
@@ -81,4 +82,25 @@ def test_conversational_memory_uses_prior_context(client):
     assert not any(phrase in answer_lower for phrase in clarifying_phrases), (
         f"model asked for clarification instead of using context from the first turn - "
         f"conversational memory isn't working: {second['answer']!r}"
+    )
+
+
+@pytest.mark.parametrize("query", [
+    "Do I need a visa to travel to Europe?",
+    "Quels documents sont necessaires pour voyager ?",
+])
+def test_entry_document_questions_always_hit_the_knowledge_base(client, query):
+    """Visa and travel-document questions must never be answered from the model's own
+    knowledge.
+
+    These routed to "llm" 0/6 times in English while the French phrasing worked - the
+    corpus chunk scores 0.995, so the answer was there and never consulted. Wrong entry
+    requirements can stop someone boarding, which makes this the costliest thing for the
+    model to guess at.
+    """
+    result = chat(client, query)
+    time.sleep(2)
+    assert "rag" in result["source"], (
+        f"answered without consulting the knowledge base: source={result['source']!r} "
+        f"answer={result['answer']!r}"
     )

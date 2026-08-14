@@ -39,7 +39,7 @@ voit jamais le texte des documents, uniquement le résultat d'un appel de récup
 | API `/chat` | `app/main.py` — plus `/chat/stream` (SSE) et `/health` |
 | Pipeline RAG | `app/rag.py` — chargement, découpage, normalisation des requêtes, récupération en deux étapes, seuil de confiance |
 | Intégration des outils | `app/tools.py` (4 outils simulés) + `app/router.py` (schémas, boucle de function calling) |
-| Tests | `tests/` — **40 tests passants** |
+| Tests | `tests/` — **42 tests passants** |
 | Interface | `app/static/index.html` — sans étape de build |
 | Évaluation | `eval/` — récupération, routage, juge LLM, robustesse |
 
@@ -56,7 +56,7 @@ Le modèle est `openai/gpt-4o-mini`, interchangeable via `MODEL_NAME` dans `rout
 Interface sur http://127.0.0.1:8000/ — chaque réponse porte un badge indiquant sa `source`.
 
 ```bash
-pytest                           # 40 tests ; ceux en direct sont ignorés sans clé API
+pytest                           # 42 tests ; ceux en direct sont ignorés sans clé API
 python -m eval.run_eval          # routage, juge, coût — nécessite une clé
 python -m eval.robustness_eval   # récupération seule, aucune clé nécessaire
 ```
@@ -136,7 +136,7 @@ Mesurées, non estimées. `openai/gpt-4o-mini` ; juge sur `claude-haiku-4.5`.
 | Coût par requête | **0,00038 $** |
 | Latence | 2,6 – 3,2 s |
 | Démarrage (embeddings en cache) | 10,3 s, contre 18,8 s à froid |
-| Tests | **40/40** |
+| Tests | **42/42** |
 
 **Comment lire ces chiffres honnêtement :** relancer deux fois la même évaluation fait
 varier les scores agrégés du juge jusqu'à 0,166. Toute différence inférieure à cela sur une
@@ -151,7 +151,7 @@ de scénarios de routage est passé de 6 à 31 : à n=6, un seul scénario pesai
 | Gestion correcte des erreurs API | ✅ Backoff sur 429/5xx, plafonné à 60 s ; 402 et rate limits traduits en erreurs HTTP propres ; 4 tests de non-régression |
 | Streaming | ✅ `POST /chat/stream` (SSE) — événements `tool`, `token`, `done` ; l'interface lit de façon incrémentale |
 | Observabilité des appels LLM | ✅ Une ligne JSON par tour (routage, outils, latence, tokens) + badge de source par réponse dans l'interface |
-| Tests automatiques RAG / Tool | ✅ Les 6 scénarios du brief + jeu de 31 scénarios de routage + test de non-régression sur la robustesse de la récupération |
+| Tests automatiques RAG / Tool | ✅ Les 6 scénarios du brief + questions de documents d'entrée + jeu de 31 scénarios de routage + non-régression sur la robustesse de la récupération |
 | Interface utilisateur simple | ✅ Aux couleurs de la marque, bilingue EN/FR, rendu markdown, badges de source |
 
 ## Limites
