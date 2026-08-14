@@ -18,7 +18,6 @@ constructed, so each case has a known correct verdict:
 Usage: python -m eval.validate_judge
 """
 
-import json
 import os
 
 from dotenv import load_dotenv
