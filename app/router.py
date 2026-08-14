@@ -1,24 +1,10 @@
-"""The router: one LLM function-calling loop that decides between RAG, tools, or both.
+"""The router: one LLM function-calling loop deciding between RAG, tools, or both.
 
-Design: RAG retrieval is exposed to the LLM as a 5th tool (search_knowledge_base) alongside
-the 4 real API tools, rather than as a separate hand-written "if policy question -> RAG else
--> tools" branch. One decision loop then naturally handles hybrid cases (e.g. "my flight is
-cancelled, can I get a refund?") by calling get_flight_status, seeing the result, and then
-calling search_knowledge_base before answering - without any special-cased code for that
-scenario.
+RAG is exposed as a 5th tool (search_knowledge_base) rather than as a hand-written branch,
+so one loop handles hybrid cases - "my flight is cancelled, can I get a refund?" calls
+get_flight_status, then search_knowledge_base, with no special-cased code.
 
-The documents themselves are still plain text; only the retrieval function is callable.
-
-Uses OpenRouter (OpenAI-compatible API) against a free-tier model. This project briefly
-moved to Anthropic Claude direct (claude-haiku-4-5), which measured 100% routing accuracy
-in testing, but the provided Anthropic key turned out to have a $0 credit balance and
-Anthropic has no free tier - a request fails outright rather than degrading. Reverted to
-OpenRouter's free tier so the app keeps working with no funds needed. Known tradeoff,
-measured directly: the free model here (nvidia/nemotron-nano-9b-v2:free, the only free
-OpenRouter model that responded reliably across several tried) scores 66.7% routing
-accuracy vs. 100% for a paid model - see README.md's "LLM provider history" section for
-the full comparison (Gemini -> OpenRouter paid -> OpenRouter free -> Anthropic -> OpenRouter
-free again).
+Uses OpenRouter (OpenAI-compatible API).
 """
 
 import json
@@ -65,15 +51,8 @@ Rules:
 def build_system_instruction(today: date | None = None) -> str:
     """Render the system prompt for one request.
 
-    The date is substituted per call rather than baked in at import time: a server
-    process that stays up for days would otherwise keep telling the model it is still
-    whatever day it booted on.
-
-    Without this, the "use today's date" rule above was unfollowable - the model has no
-    clock and silently invented one, emitting dates from its training era (observed:
-    2023-10-31, 2023-10-12 and 2023-10-18 for three runs of the same query, in 2026).
-    Harmless only while get_flight_status ignores its date argument; wrong the moment
-    the mocked tools are swapped for a real API.
+    Per call, not at import: a long-running process would otherwise keep reporting its boot
+    date. Without an injected date the model has no clock and invents one.
     """
     return SYSTEM_INSTRUCTION_TEMPLATE.format(today=(today or date.today()).isoformat())
 
@@ -167,15 +146,8 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    # The retrieval stage is a cross-encoder, which scores a terse keyword
-                    # query markedly lower than the same intent phrased as a full question -
-                    # low enough to fall under CONFIDENCE_THRESHOLD and return found=False
-                    # even when the corpus does contain the answer. Measured: "refund policy"
-                    # scores 0.464 (rejected) while "refund policy for cancelled flights"
-                    # scores 0.862 on the same corpus. Identifiers are worse still ("AH1235
-                    # refund" -> 0.013), because no policy document mentions them. Hence the
-                    # explicit phrasing contract here rather than a lower threshold: the fix
-                    # belongs at the query the model writes, not at the gate that judges it.
+                    # Phrasing matters: "refund policy" scores 0.464 and is rejected by the
+                    # confidence gate, "refund policy for cancelled flights" scores 0.862.
                     "query": {
                         "type": "string",
                         "description": (
@@ -206,15 +178,10 @@ def call_with_retry(
     max_total_delay: float = 60,
     **kwargs,
 ):
-    """Retry on rate limits / transient server errors with exponential backoff
-    (challenge bonus: "gestion correcte des erreurs API").
+    """Retry rate limits and transient 5xx with exponential backoff.
 
-    max_total_delay bounds the *cumulative* sleep, not each individual one. Unbounded,
-    this schedule waits 15+30+60+120+240 = 465s before surfacing the error - fine for a
-    batch script, useless behind an HTTP request that a browser abandoned minutes ago
-    (observed during development: a /chat call sat for over three minutes before
-    returning the 429 it already knew about on the first attempt). Whatever budget is
-    left is still spent retrying; only the pointless tail is cut.
+    max_total_delay bounds the *cumulative* sleep. Unbounded this waits 465s before
+    surfacing an error - fine for a batch script, useless behind an HTTP request.
     """
     slept = 0.0
 
@@ -244,35 +211,23 @@ logger = logging.getLogger("safaria")
 
 
 def log_turn(**fields) -> None:
-    """One structured JSON line per completed turn.
+    """One structured JSON line per turn: routing, tools, latency, tokens, transport.
 
-    The project already surfaced the routing decision as a badge in the UI, which is the
-    user-facing half of observability but leaves nothing to grep or aggregate after the
-    fact. This adds the operator-facing half: routing decision, tools called, token counts,
-    latency and transport, on a dedicated 'safaria' logger so it can be filtered or shipped
-    without touching uvicorn's own output.
-
-    Deliberately not logging the message or answer text - it is user content, and a policy
-    assistant's transcripts are not something to write to disk by default.
+    Message and answer text are deliberately not logged - that is user content.
     """
     logger.info(json.dumps({"event": "turn", **fields}, ensure_ascii=False, default=str))
 
 
 def summarize_source(calls_made: list[str]) -> str:
-    """The routing decision as a label: tool names joined by '+', 'rag' for the knowledge
-    base, 'llm' when nothing was called. Shared by chat() and chat_stream() so the badge
-    shown in the UI cannot depend on which transport produced the answer."""
+    """Routing label: tool names joined by '+', 'rag' for the knowledge base, 'llm' if
+    nothing was called. Shared by chat() and chat_stream()."""
     labels = ["rag" if name == "search_knowledge_base" else name for name in calls_made]
     return "+".join(dict.fromkeys(labels)) if labels else "llm"
 
 
 def _accumulate_tool_call_deltas(pending: dict, delta_tool_calls) -> None:
-    """Reassemble tool calls arriving in fragments across streamed chunks.
-
-    A streamed tool call is split arbitrarily: the name may land in one chunk and the JSON
-    arguments across several more. Fragments are keyed by their index in the response, not
-    by id, because the id itself only appears in the first fragment.
-    """
+    """Reassemble tool calls split across streamed chunks. Keyed by index, not id - only
+    the first fragment carries the id."""
     for fragment in delta_tool_calls:
         slot = pending.setdefault(fragment.index, {"id": None, "name": None, "arguments": ""})
         if fragment.id:
@@ -289,20 +244,10 @@ def chat_stream(
     messages: list[dict] | None = None,
     max_tool_calls: int = 4,
 ):
-    """Streaming counterpart to chat(), yielding events as the answer is produced.
+    """Streaming counterpart to chat(). Yields {"type": "tool"|"token"|"done", ...}.
 
-    Every turn is streamed, including the ones that turn out to be tool calls. That needs
-    no lookahead: a tool-call turn simply carries no content deltas, so nothing is emitted
-    for it and the loop proceeds exactly as the non-streaming version does.
-
-    Yields dicts:
-      {"type": "tool",  "name": str}   a tool is about to run (lets the UI say why it waited)
-      {"type": "token", "text": str}   a fragment of the final answer
-      {"type": "done",  "answer", "source", "messages"}
-
-    chat() is deliberately left intact rather than reimplemented on top of this: it is what
-    the test suite and eval scripts exercise, and a streamed transport is not worth
-    destabilising them for.
+    Every turn is streamed, tool-calling ones included - they simply carry no content
+    deltas, so no lookahead is needed. chat() is left intact; tests and evals drive it.
     """
     if messages is None:
         messages = [{"role": "system", "content": build_system_instruction()}]
@@ -370,8 +315,7 @@ def chat_stream(
 
     messages.append({"role": "assistant", "content": final_answer})
     source = summarize_source(calls_made)
-    # Token counts are unavailable here: streamed responses carry no usage block unless
-    # stream_options is requested, and asking for it is not worth an extra round trip.
+    # No token counts: streamed responses carry no usage block by default.
     log_turn(transport="stream", source=source, tools=calls_made,
              latency_ms=round((time.perf_counter() - started) * 1000),
              answer_chars=len(final_answer))
@@ -426,9 +370,7 @@ def chat(
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
-                # json.dumps, not str(): str() on a dict yields Python repr (single
-                # quotes, None/True rather than null/true), which is not the JSON the
-                # model is trained to read back from a tool role.
+                # json.dumps, not str(): str() yields Python repr, not JSON.
                 "content": json.dumps(tool_result, ensure_ascii=False, default=str),
             })
 

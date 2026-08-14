@@ -1,19 +1,7 @@
-"""RAG pipeline: load the policy documents, chunk them by section, embed, and retrieve.
+"""RAG pipeline: load policy documents, chunk, embed, retrieve.
 
-Two document sources are merged into one corpus:
-- app/docs/*.md: the original curated documents, chunked by '## Section' heading. Each
-  section is already a self-contained, human-authored unit of meaning, so splitting on
-  headings avoids cutting a sentence in half the way a fixed character count would.
-- Docs(for retrieving)/<Category>/*.txt: supplementary material gathered from public
-  sources (regulations, IATA/TSA standards, etc.) per the recruiter's guidance to build
-  the knowledge base from public sources. Chunked by paragraph instead, since raw pasted
-  research text won't reliably use markdown headings - if a file happens to include
-  '## Heading' lines they're respected, otherwise it falls back to one chunk per
-  blank-line-separated paragraph.
-
-Both sources feed the same RagIndex, so this is purely additive: dropping a .txt file into
-one of the category folders adds more retrievable chunks without touching what's already
-tested and working in app/docs/.
+Two sources feed one corpus: app/docs/*.md chunked by '## Section', and
+Docs(for retrieving)/<Category>/*.txt chunked by paragraph.
 """
 
 import hashlib
@@ -28,46 +16,24 @@ APP_DIR = Path(__file__).parent
 MD_DOCS_DIR = APP_DIR / "docs"
 EXTRA_DOCS_DIR = APP_DIR.parent / "Docs(for retrieving)"
 
-# Multilingual: the corpus now contains substantial French source material (RAM's French
-# site), and queries may legitimately arrive in French too given the real user base - a
-# monolingual English model fails to match either direction. Confirmed by a real test
-# failure with all-MiniLM-L6-v2 on an English "wheelchair assistance" query against
-# French-only content.
+# Multilingual: the corpus is largely French, queries arrive in both languages.
 EMBEDDING_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 
-# Second-stage reranker: a cross-encoder reads the query and a chunk TOGETHER (unlike the
-# bi-encoder above, which compares two independently-computed vectors), which makes it much
-# better at telling genuinely relevant content from merely lexically-similar content. This
-# is the fix for the precision decline documented in README.md's Evaluation section - only
-# used to re-score a small candidate pool from the bi-encoder, so it stays cheap.
 RERANKER_MODEL_NAME = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
 CANDIDATE_POOL_SIZE = 6
 
-# Recalibrated for the reranker's score scale using eval/calibrate_threshold.py - NOT the
-# same number as the bi-encoder-only threshold used before reranking was added. Different
-# scoring stages produce different distributions, so this must be re-run any time the
-# embedding model, reranker model, or candidate pool size changes.
+# On the reranker's score scale; re-run eval/calibrate_threshold.py if either model changes.
 CONFIDENCE_THRESHOLD = 0.4
 
-# Tokens shaped like a record locator: uppercase alphanumeric, 4+ chars, containing at
-# least one letter AND one digit. Matches flight numbers (AH1235) and booking references
-# (ABC123) - but also genuine corpus vocabulary (EU261, B737, B787, E190), which is why
-# _normalize_query only strips the ones absent from the corpus rather than all of them.
+# Record-locator shape: uppercase alphanumeric, 4+ chars, at least one letter and one digit.
 IDENTIFIER_TOKEN_RE = re.compile(r"\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{4,}\b")
 
 EMBEDDING_CACHE_DIR = APP_DIR.parent / ".embedding_cache"
 
 
 def _load_or_build_embeddings(model, texts: list[str], model_name: str):
-    """Encode the corpus, reusing a cached matrix when nothing relevant has changed.
-
-    Encoding 312 chunks costs most of the ~15 s startup, paid on every boot, every test
-    session and every --reload. The cache key is a hash of the model name and the corpus
-    text itself, so editing a document or switching embedding models misses the cache and
-    re-encodes: correctness does not depend on remembering to clear anything.
-
-    A corrupt or unreadable cache file is not fatal - it re-encodes and overwrites.
-    """
+    """Encode the corpus, reusing a cached matrix. Keyed by model name + corpus text, so
+    editing a document or changing model re-encodes automatically."""
     digest = hashlib.sha256(
         ("\x00".join([model_name, *texts])).encode("utf-8")
     ).hexdigest()[:16]
@@ -93,17 +59,13 @@ def _load_or_build_embeddings(model, texts: list[str], model_name: str):
 SECTION_HEADING_RE = re.compile(r"(?m)^##\s+")
 BLANK_LINE_RE = re.compile(r"\n\s*\n")
 
-# Matches a paragraph that's just a table footnote annotation, e.g. "(*) Service
-# disponible dans certains aeroports" - meaningless once separated from its table.
+# Table footnote annotations, e.g. "(*) Service disponible..." - meaningless alone.
 FOOTNOTE_MARKER_RE = re.compile(r"^\(\*+\)\s")
 
-# Boilerplate left over from copy-pasting website content (link labels, image alt-text
-# placeholders) rather than genuine policy information. Filtered out before chunking so
-# it doesn't become its own empty-content chunk in the index.
+# Scraping boilerplate, filtered before chunking.
 NOISE_LINES = {"open in a new window", "image", "image alternative text"}
 
-# Maps the folder names under Docs(for retrieving)/ to the canonical source slugs used
-# everywhere else in the system (tool descriptions, tests, the brief's 6 scenarios).
+# Folder names -> the source slugs used everywhere else.
 CATEGORY_FOLDER_TO_SOURCE = {
     "Baggage policy": "baggage_policy",
     "Refund policy": "refund_policy",
@@ -174,12 +136,7 @@ def _load_extra_txt_docs(extra_dir: Path) -> list[dict]:
                         "text": body,
                     })
             else:
-                # Drop paragraphs under 15 chars too (leftover bullet glyphs, stray
-                # single words from scraped nav menus) - too short to be a useful,
-                # independently-retrievable fact. Also drop standalone footnote markers
-                # (e.g. "(*) Service disponible dans certains aeroports") - a table
-                # annotation with no meaning outside the table it refers to, which
-                # otherwise becomes its own low-value, source-mismatched chunk.
+                # Skip fragments too short to be a retrievable fact, and footnote markers.
                 paragraphs = [
                     p.strip() for p in BLANK_LINE_RE.split(text)
                     if len(p.strip()) >= 15 and not FOOTNOTE_MARKER_RE.match(p.strip())
@@ -222,28 +179,17 @@ class RagIndex:
         self.reranker = CrossEncoder(reranker_model_name)
         texts = [c["text"] for c in chunks]
         self.embeddings = _load_or_build_embeddings(self.model, texts, model_name)
-        # Identifier-shaped tokens the corpus actually uses, so _normalize_query can tell
-        # real vocabulary (EU261, B737) from a caller's record locator (AH1235, ABC123).
+        # Real corpus vocabulary, so _normalize_query keeps EU261 but drops AH1235.
         self.corpus_identifiers = {
             token for text in texts for token in IDENTIFIER_TOKEN_RE.findall(text)
         }
 
     def _normalize_query(self, query: str) -> str:
-        """Drop record-locator tokens the corpus has never heard of.
+        """Drop record-locator tokens absent from the corpus (AH1235, ABC123).
 
-        Policy documents describe rules, never individual flights or bookings, so a
-        flight number in the query can only ever be noise here - but the cross-encoder
-        scores the query and chunk text *together*, so an unmatched token drags the whole
-        pair's relevance score down rather than being ignored. Measured on this corpus:
-
-            "refund for cancelled flight AH1235"  0.059  ->  "refund for cancelled flight"  0.790
-            "change flight AH1235 to another date" 0.075 ->  "change flight to another date" 0.520
-
-        Both were rejected by the confidence gate before stripping and pass after it, with
-        no change to what the corpus contains. Only tokens absent from the corpus are
-        removed: EU261 is a real regulation the refund documents cite, and B737/B787/E190
-        are aircraft the fleet documents name - stripping those would cause the very
-        problem this is meant to fix.
+        The cross-encoder scores query and chunk together, so an unmatched identifier drags
+        the pair down: "refund for cancelled flight AH1235" scores 0.059, without it 0.790.
+        Only unknown tokens go - EU261 and B737 are real corpus vocabulary.
         """
         stripped = IDENTIFIER_TOKEN_RE.sub(
             lambda m: m.group(0) if m.group(0) in self.corpus_identifiers else " ", query
@@ -260,17 +206,13 @@ class RagIndex:
     def retrieve(
         self, query: str, top_k: int = 4, candidate_pool_size: int = CANDIDATE_POOL_SIZE
     ) -> list[tuple[dict, float]]:
-        """Two-stage retrieval: the bi-encoder narrows the full corpus down to a small
-        candidate pool, then the cross-encoder reranker re-scores just that pool by reading
-        the query and each chunk together - far more accurate than comparing precomputed
-        vectors, at the cost of only being feasible on a small pool, not the whole corpus."""
+        """Two-stage: bi-encoder narrows the corpus to a small pool, cross-encoder reranks
+        it. The reranker is more accurate but only affordable on a small pool."""
         query = self._normalize_query(query)
         candidates = self._retrieve_candidates(query, top_k=candidate_pool_size)
         pairs = [(query, chunk["text"]) for chunk, _bi_encoder_score in candidates]
         raw_scores = self.reranker.predict(pairs)
-        # Manual sigmoid rather than relying on the model's default activation config,
-        # which varies across cross-encoder checkpoints and sentence-transformers versions -
-        # this guarantees a consistent 0-1 scale regardless.
+        # Manual sigmoid: default activation varies across checkpoints and library versions.
         rerank_scores = [1 / (1 + math.exp(-float(s))) for s in raw_scores]
 
         reranked = sorted(
@@ -281,9 +223,8 @@ class RagIndex:
         return [(chunk, score) for chunk, score in reranked[:top_k]]
 
     def search(self, query: str, top_k: int = 4, threshold: float = CONFIDENCE_THRESHOLD) -> dict:
-        """Retrieve + apply the confidence gate. Returns found=False (no LLM call needed)
-        when nothing in the corpus is actually relevant, instead of returning weak context
-        that an LLM might be tempted to stretch into an answer."""
+        """Retrieve + confidence gate. Returns found=False rather than weak context an LLM
+        might stretch into an answer."""
         results = self.retrieve(query, top_k=top_k)
         top_score = results[0][1] if results else 0.0
 

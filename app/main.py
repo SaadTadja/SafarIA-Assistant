@@ -25,9 +25,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 _client = None
 
-# In-memory conversation store: session_id -> the "messages" list from that session's last
-# router.chat() call. Ephemeral (lost on restart) and unbounded (no eviction) - fine for a
-# demo/single-process deployment, not for production (would need Redis/a DB with TTL there).
+# session_id -> messages. Ephemeral and unbounded; production would need Redis/a DB with TTL.
 _sessions: dict[str, list[dict]] = {}
 
 
@@ -76,16 +74,10 @@ def chat_endpoint(request: ChatRequest) -> ChatResponse:
 
 @app.post("/chat/stream")
 def chat_stream_endpoint(request: ChatRequest) -> StreamingResponse:
-    """Server-sent events version of /chat (challenge bonus: streaming).
+    """Server-sent events version of /chat.
 
-    /chat is kept as-is rather than reimplemented on top of this. It is what the tests and
-    eval scripts drive, and its single JSON response is the more useful contract for a
-    programmatic caller; streaming only helps a human watching text appear.
-
-    Errors are a genuine limitation of streaming: the HTTP status is committed the moment
-    the first byte is sent, so a provider failure mid-answer cannot become a 502. Those are
-    emitted as an "error" event instead and rendered in the bubble by the UI. Failures
-    raised before the first token still surface as normal HTTP errors.
+    A streamed response commits HTTP 200 before the provider can fail, so mid-stream errors
+    arrive as an "error" event rather than a 502.
     """
     client = get_client()
     session_id = request.session_id or str(uuid.uuid4())
@@ -109,8 +101,7 @@ def chat_stream_endpoint(request: ChatRequest) -> StreamingResponse:
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        # Without this an intermediate proxy will happily buffer the whole response and
-        # deliver it in one piece, which looks exactly like streaming not working.
+        # Stops proxies buffering the whole response, which looks like streaming not working.
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 

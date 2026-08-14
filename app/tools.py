@@ -1,14 +1,7 @@
-"""The 4 dynamic-data tools from the challenge brief.
+"""The 4 dynamic-data tools from the brief, mocked with fixed in-memory data.
 
-These are mocked: no real airline API is available for this challenge, so each function
-returns fixed in-memory data. The docstrings and type hints are load-bearing, not
-decoration - the LLM reads them to decide which tool to call and how to fill in arguments,
-so a vague docstring produces worse tool selection, the same way a vague RAG chunk produces
-worse retrieval.
-
-Swapping these bodies for real API/database calls later doesn't change anything else in the
-system - the router and the LLM's decision-making are entirely decoupled from how a tool is
-implemented internally.
+Swapping these bodies for real API calls changes nothing else in the system. The
+descriptions the LLM actually reads live in router.py's TOOLS_SCHEMA, not here.
 """
 
 _FLIGHTS_DB = {
@@ -65,13 +58,7 @@ _BOOKINGS_DB = {
 
 
 def search_flights(origin: str, destination: str, departure_date: str) -> dict:
-    """Search available flights between two cities on a given date.
-
-    Args:
-        origin: departure city or airport, e.g. 'Paris'
-        destination: arrival city or airport, e.g. 'Algiers'
-        departure_date: date of departure, e.g. '2026-08-13' or 'tomorrow'
-    """
+    """Search available flights between two cities on a given date."""
     return {
         "flights": [
             {
@@ -87,30 +74,17 @@ def search_flights(origin: str, destination: str, departure_date: str) -> dict:
 
 
 def get_flight_status(flight_number: str, date: str) -> dict:
-    """Get the current status of a specific flight: status, departure/arrival times, terminal, gate.
-
-    Args:
-        flight_number: the flight number, e.g. 'AH1235'
-        date: the date of the flight, e.g. '2026-08-12'
-    """
+    """Status, times, terminal and gate for a specific flight."""
     return _FLIGHTS_DB.get(flight_number, {"error": f"No data found for flight {flight_number}"})
 
 
 def get_airport_info(airport_code: str) -> dict:
-    """Get information about an airport: name, city, terminals, timezone.
-
-    Args:
-        airport_code: IATA airport code, e.g. 'CDG'
-    """
+    """Name, city, terminals and timezone for an IATA airport code."""
     return _AIRPORTS_DB.get(airport_code, {"error": f"No data found for airport {airport_code}"})
 
 
 def get_booking(booking_reference: str) -> dict:
-    """Get booking details by reference number: flight, date, passengers, class, baggage.
-
-    Args:
-        booking_reference: the booking reference code, e.g. 'ABC123'
-    """
+    """Booking details by reference: flight, date, passengers, class, baggage."""
     return _BOOKINGS_DB.get(booking_reference, {"error": f"No booking found for reference {booking_reference}"})
 
 
