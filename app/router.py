@@ -23,13 +23,16 @@ free again).
 
 import json
 import time
+from datetime import date
 
 import openai
 
 from .rag import RagIndex, load_documents
 from .tools import TOOL_FUNCTIONS
 
-SYSTEM_INSTRUCTION = """You are an airline travel assistant.
+SYSTEM_INSTRUCTION_TEMPLATE = """You are an airline travel assistant.
+
+Today's date is {today}.
 
 You have tools for live data (flight search, flight status, airport info, booking lookup)
 and a tool to search internal policy documents (search_knowledge_base).
@@ -48,7 +51,24 @@ Rules:
   date is a reasonable default, use today's date rather than asking the user for it.
 """
 
-MODEL_NAME = "nvidia/nemotron-nano-9b-v2:free"
+
+def build_system_instruction(today: date | None = None) -> str:
+    """Render the system prompt for one request.
+
+    The date is substituted per call rather than baked in at import time: a server
+    process that stays up for days would otherwise keep telling the model it is still
+    whatever day it booted on.
+
+    Without this, the "use today's date" rule above was unfollowable - the model has no
+    clock and silently invented one, emitting dates from its training era (observed:
+    2023-10-31, 2023-10-12 and 2023-10-18 for three runs of the same query, in 2026).
+    Harmless only while get_flight_status ignores its date argument; wrong the moment
+    the mocked tools are swapped for a real API.
+    """
+    return SYSTEM_INSTRUCTION_TEMPLATE.format(today=(today or date.today()).isoformat())
+
+
+MODEL_NAME = "openai/gpt-4o-mini"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 _rag_index = RagIndex(load_documents())
@@ -137,7 +157,25 @@ TOOLS_SCHEMA = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "the policy question to search for"},
+                    # The retrieval stage is a cross-encoder, which scores a terse keyword
+                    # query markedly lower than the same intent phrased as a full question -
+                    # low enough to fall under CONFIDENCE_THRESHOLD and return found=False
+                    # even when the corpus does contain the answer. Measured: "refund policy"
+                    # scores 0.464 (rejected) while "refund policy for cancelled flights"
+                    # scores 0.862 on the same corpus. Identifiers are worse still ("AH1235
+                    # refund" -> 0.013), because no policy document mentions them. Hence the
+                    # explicit phrasing contract here rather than a lower threshold: the fix
+                    # belongs at the query the model writes, not at the gate that judges it.
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "A complete natural-language policy question, e.g. 'What is the refund "
+                            "policy for a cancelled flight?'. Phrase it as a full question, not as "
+                            "keywords ('refund policy' retrieves poorly). Never include flight "
+                            "numbers, booking references, or airport codes - policy documents don't "
+                            "contain them and they degrade retrieval badly."
+                        ),
+                    },
                 },
                 "required": ["query"],
             },
@@ -150,20 +188,46 @@ def build_client(api_key: str) -> openai.OpenAI:
     return openai.OpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL)
 
 
-def call_with_retry(fn, *args, max_retries: int = 5, base_delay: float = 15, **kwargs):
+def call_with_retry(
+    fn,
+    *args,
+    max_retries: int = 5,
+    base_delay: float = 15,
+    max_total_delay: float = 60,
+    **kwargs,
+):
     """Retry on rate limits / transient server errors with exponential backoff
-    (challenge bonus: "gestion correcte des erreurs API")."""
+    (challenge bonus: "gestion correcte des erreurs API").
+
+    max_total_delay bounds the *cumulative* sleep, not each individual one. Unbounded,
+    this schedule waits 15+30+60+120+240 = 465s before surfacing the error - fine for a
+    batch script, useless behind an HTTP request that a browser abandoned minutes ago
+    (observed during development: a /chat call sat for over three minutes before
+    returning the 429 it already knew about on the first attempt). Whatever budget is
+    left is still spent retrying; only the pointless tail is cut.
+    """
+    slept = 0.0
+
+    def backoff(attempt: int) -> bool:
+        """Sleep before the next attempt. False if the budget is spent (stop retrying)."""
+        nonlocal slept
+        remaining = max_total_delay - slept
+        if remaining <= 0:
+            return False
+        delay = min(base_delay * (2 ** attempt), remaining)
+        time.sleep(delay)
+        slept += delay
+        return True
+
     for attempt in range(max_retries):
         try:
             return fn(*args, **kwargs)
         except openai.RateLimitError:
-            if attempt == max_retries - 1:
+            if attempt == max_retries - 1 or not backoff(attempt):
                 raise
-            time.sleep(base_delay * (2 ** attempt))
         except openai.APIStatusError as e:
-            if e.status_code < 500 or attempt == max_retries - 1:
+            if e.status_code < 500 or attempt == max_retries - 1 or not backoff(attempt):
                 raise
-            time.sleep(base_delay * (2 ** attempt))
 
 
 def chat(
@@ -177,7 +241,7 @@ def chat(
     one. Returns {"answer", "source", "tool_calls", "messages"} - "messages" is the updated
     history, to be passed back in on the next turn for conversational memory."""
     if messages is None:
-        messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
+        messages = [{"role": "system", "content": build_system_instruction()}]
     messages = messages + [{"role": "user", "content": message}]
 
     calls_made: list[str] = []
@@ -208,7 +272,10 @@ def chat(
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
-                "content": str(tool_result),
+                # json.dumps, not str(): str() on a dict yields Python repr (single
+                # quotes, None/True rather than null/true), which is not the JSON the
+                # model is trained to read back from a tool role.
+                "content": json.dumps(tool_result, ensure_ascii=False, default=str),
             })
 
     labels = ["rag" if name == "search_knowledge_base" else name for name in calls_made]

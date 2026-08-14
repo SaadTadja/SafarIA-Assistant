@@ -1,2 +1,7 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
+# Only tests/ is the test suite. eval/ holds scripts, but eval/ui_smoke_test.py matches
+# pytest's default *_test.py discovery pattern, so a bare `pytest` from the repo root
+# used to abort at collection with ModuleNotFoundError: playwright (an optional,
+# browser-only dependency deliberately kept out of requirements.txt).
+testpaths = ["tests"]

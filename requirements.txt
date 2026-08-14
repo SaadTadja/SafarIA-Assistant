@@ -1,9 +1,16 @@
-fastapi
-uvicorn[standard]
-pydantic
-openai
-python-dotenv
-sentence-transformers
-numpy
-pytest
-httpx
+# Pinned to the versions verified working together on Python 3.14 (2026-08-14):
+# full suite green (36/36) and a live evaluation run completed against these.
+# sentence-transformers pulls torch/transformers transitively - left unpinned, since
+# pinning a torch build here would tie the project to one platform's wheels.
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+pydantic==2.13.4
+openai==3.0.0
+python-dotenv==1.2.2
+sentence-transformers==5.7.0
+numpy==2.5.2
+pytest==9.1.1
+httpx==0.28.1
+
+# Optional, for eval/ui_smoke_test.py only (browser smoke test):
+#   pip install playwright && playwright install chromium

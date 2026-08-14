@@ -46,7 +46,13 @@ CANDIDATE_POOL_SIZE = 6
 # same number as the bi-encoder-only threshold used before reranking was added. Different
 # scoring stages produce different distributions, so this must be re-run any time the
 # embedding model, reranker model, or candidate pool size changes.
-CONFIDENCE_THRESHOLD = 0.5
+CONFIDENCE_THRESHOLD = 0.4
+
+# Tokens shaped like a record locator: uppercase alphanumeric, 4+ chars, containing at
+# least one letter AND one digit. Matches flight numbers (AH1235) and booking references
+# (ABC123) - but also genuine corpus vocabulary (EU261, B737, B787, E190), which is why
+# _normalize_query only strips the ones absent from the corpus rather than all of them.
+IDENTIFIER_TOKEN_RE = re.compile(r"\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{4,}\b")
 
 SECTION_HEADING_RE = re.compile(r"(?m)^##\s+")
 BLANK_LINE_RE = re.compile(r"\n\s*\n")
@@ -180,6 +186,33 @@ class RagIndex:
         self.reranker = CrossEncoder(reranker_model_name)
         texts = [c["text"] for c in chunks]
         self.embeddings = self.model.encode(texts, normalize_embeddings=True)
+        # Identifier-shaped tokens the corpus actually uses, so _normalize_query can tell
+        # real vocabulary (EU261, B737) from a caller's record locator (AH1235, ABC123).
+        self.corpus_identifiers = {
+            token for text in texts for token in IDENTIFIER_TOKEN_RE.findall(text)
+        }
+
+    def _normalize_query(self, query: str) -> str:
+        """Drop record-locator tokens the corpus has never heard of.
+
+        Policy documents describe rules, never individual flights or bookings, so a
+        flight number in the query can only ever be noise here - but the cross-encoder
+        scores the query and chunk text *together*, so an unmatched token drags the whole
+        pair's relevance score down rather than being ignored. Measured on this corpus:
+
+            "refund for cancelled flight AH1235"  0.059  ->  "refund for cancelled flight"  0.790
+            "change flight AH1235 to another date" 0.075 ->  "change flight to another date" 0.520
+
+        Both were rejected by the confidence gate before stripping and pass after it, with
+        no change to what the corpus contains. Only tokens absent from the corpus are
+        removed: EU261 is a real regulation the refund documents cite, and B737/B787/E190
+        are aircraft the fleet documents name - stripping those would cause the very
+        problem this is meant to fix.
+        """
+        stripped = IDENTIFIER_TOKEN_RE.sub(
+            lambda m: m.group(0) if m.group(0) in self.corpus_identifiers else " ", query
+        )
+        return re.sub(r"\s{2,}", " ", stripped).strip() or query
 
     def _retrieve_candidates(self, query: str, top_k: int) -> list[tuple[dict, float]]:
         """First-pass retrieval: fast bi-encoder cosine similarity over the whole corpus."""
@@ -195,6 +228,7 @@ class RagIndex:
         candidate pool, then the cross-encoder reranker re-scores just that pool by reading
         the query and each chunk together - far more accurate than comparing precomputed
         vectors, at the cost of only being feasible on a small pool, not the whole corpus."""
+        query = self._normalize_query(query)
         candidates = self._retrieve_candidates(query, top_k=candidate_pool_size)
         pairs = [(query, chunk["text"]) for chunk, _bi_encoder_score in candidates]
         raw_scores = self.reranker.predict(pairs)

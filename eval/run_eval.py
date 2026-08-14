@@ -21,7 +21,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from app.rag import RagIndex, load_documents
-from app.router import ALL_TOOLS, MODEL_NAME, SYSTEM_INSTRUCTION, TOOLS_SCHEMA, build_client, call_with_retry
+from app.router import ALL_TOOLS, MODEL_NAME, TOOLS_SCHEMA, build_client, build_system_instruction, call_with_retry
 
 load_dotenv()
 
@@ -118,14 +118,14 @@ SCENARIOS = [
 
 SMALL_TALK_QUERY = "Hello, who are you?"
 
-# nvidia/nemotron-nano-9b-v2:free is a free OpenRouter model - $0 either direction.
-PRICE_PER_M_INPUT = 0.0
-PRICE_PER_M_OUTPUT = 0.0
+# openai/gpt-4o-mini via OpenRouter - USD per 1M tokens, each direction.
+PRICE_PER_M_INPUT = 0.15
+PRICE_PER_M_OUTPUT = 0.60
 
 
 def run_query(client, query: str, max_tool_calls: int = 4) -> dict:
     messages = [
-        {"role": "system", "content": SYSTEM_INSTRUCTION},
+        {"role": "system", "content": build_system_instruction()},
         {"role": "user", "content": query},
     ]
     calls: list[tuple[str, dict]] = []
