@@ -47,8 +47,9 @@ app/
   docs/              Hand-written starter documents (only kept live where real source
                      material doesn't fully supersede them - see Knowledge base sources)
   rag.py             Document loader (chunks by markdown '##' section for app/docs, by
-                     paragraph for Docs(for retrieving)), two-stage retrieval (multilingual
-                     bi-encoder candidate search + cross-encoder reranking), confidence gate
+                     paragraph for Docs(for retrieving)), query normalization, two-stage
+                     retrieval (multilingual bi-encoder candidate search + cross-encoder
+                     reranking), confidence gate
   tools.py           The 4 mocked API tools from the brief
   router.py          System prompt, the 5-tool model, the function-calling loop
   main.py            FastAPI app, POST /chat, graceful API-error handling, serves the UI
@@ -80,7 +81,8 @@ over, because the reasoning behind each change is as relevant as the final state
 | 2. Initial deliverable | `openai/gpt-4o-mini` via OpenRouter | Reliable tool-selection/argument accuracy at low cost - measured 100% routing accuracy on all 6 brief scenarios |
 | 3. Free-tier fallback | `nvidia/nemotron-nano-9b-v2:free` via OpenRouter | The OpenRouter account had a $5 minimum top-up that available budget couldn't clear. Four free models were tried; three failed outright (retired from the free tier, rate-limited after ~4.5 minutes, or returned empty responses) before this one proved reliable enough to use. Measured routing accuracy: 66.7-83.3% across runs, down from 100% |
 | 4. Paid attempt #2 | `claude-haiku-4-5` via Anthropic direct | Re-measured 100% routing accuracy in initial testing - but the provided API key turned out to have a **$0 credit balance**, meaning every live request failed outright with `BadRequestError`, no partial degradation |
-| 5. Current state | Back to `nvidia/nemotron-nano-9b-v2:free` via OpenRouter | The only currently-viable no-cost option. This is the real, current configuration - not a placeholder for something better. Two independent measurements (stages 2 and 4) confirm routing accuracy would return to ~100% with either paid provider funded |
+| 5. Free-tier fallback again | Back to `nvidia/nemotron-nano-9b-v2:free` via OpenRouter | The only viable no-cost option at the time. Two independent measurements (stages 2 and 4) suggested routing accuracy would return to ~100% with either paid provider funded |
+| 6. Current state | `openai/gpt-4o-mini` via OpenRouter (funded) | The account was topped up, which settled the question the previous four stages danced around: a **full evaluation run costs $0.0019**, and a single query $0.00028. The constraint was never the inference bill - it was OpenRouter's $5 minimum top-up, a threshold problem misread as an affordability one for most of this project's life. Routing accuracy re-measured at 100%, matching stages 2 and 4 |
 
 **RAG knowledge base:**
 
@@ -102,6 +104,10 @@ third-party claims-service's promotional content - cleaned to keep only the form
 | + rewording one chunk to match query phrasing | 88.9% | 72.2% (unchanged - repositioning within top-4 doesn't change the correct-chunk count) |
 | + archiving the conflicting placeholder doc, filtering footnote-fragment chunks | **100%** | **75%** |
 
+(Both columns above are measured on the original 9-query, full-sentence set. The Precision
+column is Precision@4 - see the note under "Evaluation". For the expanded 26-query set that
+also covers terse and identifier-bearing queries, see "Two bugs" below.)
+
 Two of the ten remaining "off-topic" slots in the current Precision@3 measurement turned out,
 on inspection, to be **correct behavior** - genuinely cross-topical content (e.g. a fare table
 covering both change and refund conditions) legitimately surfacing under both categories, not
@@ -109,6 +115,79 @@ a bug. Pushing Precision@3 materially higher would require either accepting a sm
 real semantic-adjacency confusion (e.g. "connection time" vs. "general arrival time" queries
 sharing vocabulary) as a hard case, or a reranker/embedding-model change with unverified
 payoff - documented as a known limitation rather than chased further.
+
+**Two bugs that every test and metric in this project scored as passing.** Both were found
+by using the assistant in a browser once the paid key made that reliable, not by reading the
+code, and neither would have been caught by the evaluation as written. They are documented
+at length because the way they hid is more instructive than the fixes.
+
+*1. The retrieval test set measured a query distribution the router never produced.*
+
+Every one of the 9 RAG evaluation queries is a well-formed sentence ("Can I get a refund if
+my flight is cancelled?"). The router does not write sentences. Asked the brief's flagship
+question - "My flight AH1235 is cancelled. Can I get a refund?" - it usually called
+`search_knowledge_base` with the query `'refund policy'`, which the cross-encoder scores
+**0.464** against the then-current 0.50 gate. Retrieval returned `found: False` while 59
+refund-policy chunks sat in the corpus, and the assistant told the user to contact customer
+support. **The flagship scenario failed 4 times in 5 in the live app**, against a measured
+Hit Rate@1 of 100%.
+
+Both numbers were correct. The retrieval was genuinely excellent at the queries it was
+tested on, and those were not the queries it received.
+
+The evaluation scored the broken answer as a *pass*: scenario 5's grounding check is
+`answer_must_contain_any: ["refund"]`, and *"I couldn't find specific information regarding
+the refund policy"* contains "refund". This is the same keyword-matching weakness already
+documented under "Evaluation" below, in the far more dangerous direction - a false pass
+rather than a false alarm.
+
+Fixed at the query the model writes rather than the gate that judges it: the `query`
+argument's description now states a phrasing contract (full question, never keywords or
+identifiers). Lowering the threshold instead would have papered over a bad query by
+weakening the only mechanism giving 100% out-of-scope rejection. Measured after: 10/10
+retrieval, 5/5 correct live answers.
+
+*2. The model was instructed to use today's date and never told what it was.*
+
+The system prompt says to default to today's date for an unspecified flight date. Nothing
+ever supplied one. The model has no clock, so it invented dates from its training era -
+`2023-10-31`, `2023-10-12` and `2023-10-18` across three runs of the same query, in 2026.
+Invisible because `get_flight_status` ignores its `date` argument; wrong the instant the
+mocked tools are swapped for a real API, which this README elsewhere claims "doesn't require
+changing anything else in the system". This was that one thing. The date is now rendered per
+request rather than at import, so a process that stays up for days doesn't keep reporting
+the day it booted. 5/5 correct after.
+
+The common shape: both bugs are correct-looking, test-passing, and only observable by
+running the thing. The project had been verified by reading and by unit tests, and the one
+check that would have caught either - typing a question into the UI - costs three requests,
+well inside even the free tier's daily cap that the four provider stages above were spent
+working around.
+
+**Retrieval robustness, measured after the above.** The 9-query set was expanded to 26,
+adding the two forms it never covered - terse keyword queries and identifier-bearing
+queries - and the out-of-scope set from 1 query to 10:
+
+| | Hit Rate@1 | Confidence-gate pass | Out-of-scope rejection |
+|---|---|---|---|
+| Before | 88.5% | 69.2% | 100% |
+| After | **92.3%** | **88.5%** | **100%** |
+| *(identifier-bearing queries only)* | 66.7% -> **83.3%** | 16.7% -> **83.3%** | - |
+
+Two changes, neither sufficient alone (76.9% and 73.1% separately, 88.5% together): query
+normalization strips record-locator tokens absent from the corpus before retrieval, and
+`CONFIDENCE_THRESHOLD` moved 0.50 -> 0.40. See "Retrieval" below for both.
+
+Notably, **5 of the 8 original failures ranked the correct source first and were then
+discarded by the confidence gate** - a calibration problem, not a ranking one, which is why
+the fix targeted the gate's input rather than the reranker.
+
+**One hypothesis tested and rejected**, recorded because a negative result is still a
+result: 23 chunks (7.4% of the corpus) are bare headings under 40 characters
+("Recommendations", "Upon Your Arrival"), and these were assumed to be noise crowding a
+6-slot candidate pool. Dropping them, and separately merging them into the following chunk,
+both made retrieval measurably *worse* (Hit Rate@1 92.3% -> 84.6%, Precision 77.9% ->
+76.9%). The headings carry real semantic signal. The corpus was left untouched.
 
 **UI:** started as a minimal functional chat interface (bonus point: "interface utilisateur
 simple"), then restyled using Royal Air Maroc's actual brand palette (sampled directly from
@@ -123,15 +202,13 @@ that referenced a generic foreign airport (Paris CDG) instead of Royal Air Maroc
 ## Running it
 
 Uses [OpenRouter](https://openrouter.ai) (OpenAI-compatible API). **Current configuration:
-`nvidia/nemotron-nano-9b-v2:free`** (see "Project evolution" above for why) - swappable via
-`MODEL_NAME` in `router.py` without touching any routing logic. Switching to a paid model
-(OpenRouter or otherwise) is a one-line change plus `build_client`/error-type adjustments if
-changing providers entirely.
+`openai/gpt-4o-mini`** - swappable via `MODEL_NAME` in `router.py` without touching any
+routing logic. Switching to another paid model (OpenRouter or otherwise) is a one-line change
+plus `build_client`/error-type adjustments if changing providers entirely.
 
-> **Known trade-off of the current free-tier configuration**: routing accuracy measured at
-> 66.7-83.3% across different runs, down from 100% with either paid provider tested. This
-> is a model-reliability ceiling, not a router-logic bug - see "Project evolution" for the
-> two independent paid-model measurements that confirm this.
+> **Cost**: $0.00028 per query, $0.0019 for a complete evaluation run. Running this is
+> effectively free; the earlier free-tier configuration (see "Project evolution") cost a
+> measured 17-33 points of routing accuracy to avoid a $5 minimum top-up.
 
 ```bash
 python -m venv .venv
@@ -159,10 +236,12 @@ pytest                          # everything, including live routing tests if .e
 pytest tests/test_main.py tests/test_rag.py tests/test_tools.py   # non-live subset only
 ```
 
-25 non-live tests currently pass (API contract, retrieval correctness, mocked tool unit
-tests). The 8 live tests in `tests/test_router.py` (the brief's 6 scenarios + a small-talk
-check + a hard-edge-case check) require a funded API key and are skipped automatically
-without one.
+**36/36 tests pass** - 27 non-live (API contract, retrieval correctness, mocked tool unit
+tests) plus the 9 live tests in `tests/test_router.py` (the brief's 6 scenarios, a small-talk
+check, a hard-edge-case check, and a conversational-memory check), which require a funded API
+key and are skipped automatically without one. `pytest` is scoped to `tests/` in
+`pyproject.toml`, so a bare `pytest` from the repo root no longer aborts trying to collect
+`eval/ui_smoke_test.py`, whose `playwright` dependency is deliberately optional.
 
 ## How RAG vs. Tools is chosen
 
@@ -183,10 +262,13 @@ Two mechanisms, not one:
    flight's status..."), which is what keeps it from firing on flight/booking questions.
 2. **The confidence threshold in `RagIndex.search`** (`app/rag.py`) rejects retrieval before
    it ever reaches the LLM if the top score (after reranking - see "Retrieval: two-stage
-   reranking" below) is below `0.5` (recalibrated for the reranker's score scale - see
-   `eval/calibrate_threshold.py`) - so even if `search_knowledge_base` gets called on a
+   reranking" below) is below `0.4` - so even if `search_knowledge_base` gets called on a
    borderline or unanswerable question, no wasted generation call happens on top of it; the
-   function itself returns `found: False`.
+   function itself returns `found: False`. The value was originally 0.5 (recalibrated for the
+   reranker's score scale - see `eval/calibrate_threshold.py`) and moved to 0.4 on a sweep
+   across a 26-query in-scope set and a 10-query out-of-scope set: 0.4 is where in-scope pass
+   rate stops improving, and it sits 0.174 above the highest out-of-scope score observed
+   (0.226), so rejection stays at 100%.
 
 `tests/test_router.py` includes a small-talk case ("Hello, who are you?") that must produce
 `source: "llm"` with zero tool calls, as a regression check against unnecessary calls creeping
@@ -240,7 +322,12 @@ it?" in a second turn, and asserts the router correctly resolves "it" from conte
 
 `call_with_retry` in `router.py` wraps every API call with exponential backoff on rate limits
 (`RateLimitError`) and transient 5xx errors (`APIStatusError` with `status_code >= 500`),
-retrying up to 5 times before giving up. Non-retryable errors (4xx other than rate limits -
+retrying up to 5 times, and **bounded to 60 seconds of cumulative sleep**. That cap was added
+after watching the unbounded schedule (15+30+60+120+240 = 465 s) hold an HTTP request for
+over three minutes before surfacing a 429 it already knew about on the first attempt - a
+sensible policy for a batch script and a useless one behind a browser that gave up minutes
+earlier. Whatever budget remains is still spent retrying; only the pointless tail is cut.
+Non-retryable errors (4xx other than rate limits -
 e.g. a `402` insufficient-credits error, which was hit for real during development on both
 providers tried) propagate immediately rather than retrying pointlessly. `max_tokens=500` is
 set explicitly on every request: answers here are short, and an unbounded default risks both
@@ -260,7 +347,9 @@ two regression tests in `tests/test_main.py`.
 has a *daily* request cap (`free-models-per-day`) separate from per-minute rate limiting -
 `call_with_retry`'s backoff cannot recover from this (it's not transient), so a full eval run
 mid-quota simply fails with a clear error rather than hanging or silently producing partial
-results. Documented here as a known operational constraint of the free-tier configuration.
+results. This no longer applies to the current paid configuration, but it is what the
+unbounded retry schedule was originally tuned against - and tuning for a batch script is
+exactly why that schedule behaved so badly behind an HTTP request (see the 60 s cap above).
 
 ## Knowledge base sources
 
@@ -324,7 +413,18 @@ scope, the corpus combines two layers, merged by `app/rag.py`:
 
 ## Retrieval: two-stage reranking
 
-`RagIndex.retrieve` (`app/rag.py`) is two stages, not one:
+`RagIndex.retrieve` (`app/rag.py`) is two stages, preceded by a normalization step:
+
+0. **Query normalization** - record-locator tokens (flight numbers like `AH1235`, booking
+   references like `ABC123`) are stripped before retrieval. Policy documents describe rules,
+   never individual flights, so such a token can only be noise here - but a cross-encoder
+   scores the query and chunk text *together*, so an unmatched token drags the whole pair's
+   score down rather than being ignored. Measured: `"refund for cancelled flight AH1235"`
+   scores 0.059 and is rejected; `"refund for cancelled flight"` scores 0.790 and passes.
+   Only tokens **absent from the corpus** are stripped, which is what keeps `EU261` (a
+   regulation the refund documents cite) and `B737`/`B787`/`E190` (aircraft the fleet
+   documents name) intact - a blanket regex over identifier-shaped tokens would have caused
+   exactly the failure this is meant to prevent.
 
 1. **Bi-encoder candidate search** - the multilingual embedding model scores the whole
    corpus against the query (cheap: precomputed chunk vectors, one query encode per call),
@@ -358,25 +458,60 @@ what's actually configured.
 `eval/run_eval.py` computes real metrics rather than estimates - retrieval scores from the
 actual corpus, and live API calls for routing/tool-selection/argument extraction.
 
-**RAG retrieval (current, verified against the current corpus and code):**
+**RAG retrieval, original 9-query set (full-sentence queries only):**
 
 | Metric | Value |
 |---|---|
 | Hit Rate@1 | 100% |
 | Hit Rate@3 | 100% |
-| Precision@3 | 75% |
+| MRR | 1.000 |
+| Precision@3 | 85.2% |
+| Precision@4 | 75% |
 | Out-of-scope rejection rate | 100% |
 
-**Router / tool-calling (live, current free-tier model):**
+> `run_eval.py` reports the 75% figure under the key `precision_at_3`, but it divides by
+> `len(sources)` where `top_k=4` - so that number is Precision@**4**. True Precision@3 is
+> 85.2%. The metric was understating retrieval quality by 10 points.
+
+**RAG retrieval, expanded 26-query set** (adds terse and identifier-bearing queries - the
+forms the router actually emits, which the original set never covered):
+
+| Metric | Full sentence (9) | Terse (11) | Identifier (6) | Overall (26) |
+|---|---|---|---|---|
+| Hit Rate@1 | 100% | 90.9% | 83.3% | **92.3%** |
+| Confidence-gate pass | 100% | 81.8% | 83.3% | **88.5%** |
+
+Out-of-scope rejection: **100%** across 10 queries. The 3 remaining in-scope failures
+("check-in deadline", "flight change fees", "baggage allowance for booking") all rank
+sensibly but score near zero - the cross-encoder is simply unreliable on 2-3 word queries.
+That is a model property rather than a tunable defect, and the router-side phrasing contract
+prevents those forms reaching retrieval in practice.
+
+**Router / tool-calling (live, `openai/gpt-4o-mini`):**
 
 | Metric | Value |
 |---|---|
-| Routing accuracy (6 brief scenarios) | 83.3% (5/6) - varies 66.7-83.3% across runs |
-| No tool call on small talk | Pass |
-| Rejects hard out-of-scope edge case | Pass |
+| Routing accuracy (6 brief scenarios) | **100%** |
+| Tool-selection accuracy | **100%** |
+| Argument extraction accuracy | **100%** |
+| Answer grounding rate (keyword-based - see caveat below) | 100% |
+| Unnecessary tool calls on small talk | **0%** |
+| Tool selection, 11 extended scenarios (graded subset) | **100%** |
+| Forbidden-content violations (incl. 2 prompt-injection probes) | **0%** |
+| Avg latency | 2.6-2.9 s/query |
+| Avg tokens | 1,411 in / 109 out |
+| Cost | $0.00028/query |
 
-**Routing accuracy with a funded paid model, measured earlier in this project (see "Project
-evolution"): 100%, on both `gpt-4o-mini` and `claude-haiku-4-5` independently.**
+Latency is almost entirely the LLM: ~1 s per round trip, 1-3 round trips per query
+depending on routing. Retrieval contributes 0.274 s (of which the reranker is 0.254 s),
+about 8% of a RAG-answering request. Index build at startup is a one-time 15 s.
+
+> **The grounding rate above should not be read as a faithfulness measurement.** The check
+> is `any(keyword in answer)`. It scored the flagship scenario 100% while that scenario was
+> failing 4 times in 5 (see "Project evolution"), because the failure message contained the
+> keyword. It cannot distinguish a correct answer, a retrieval failure, and a hallucination
+> that happens to use the right word. Replacing it with an LLM-as-judge pass is the single
+> highest-value item left, and now costs about a cent to run.
 
 Metrics not yet automated: Faithfulness/Completeness via an LLM-as-judge pass (current
 grounding checks are keyword-based, which has real, demonstrated limitations - a substring
@@ -400,11 +535,15 @@ verified, not where merely partially addressed:
 
 ## Limitations
 
-- **Currently running on a free-tier LLM**, with a measured routing-accuracy ceiling of
-  66.7-83.3% versus 100% with a funded paid provider (verified twice, with two different
-  providers - see "Project evolution"). This is the single largest gap between this
-  project's engineering and its live behavior, and it's a budget constraint, not an
-  architecture gap.
+- **Faithfulness is not actually measured.** The grounding check is keyword matching, and it
+  has now demonstrably failed in both directions: a false alarm (flagging "you would *not* be
+  eligible for a refund" as a hallucination) and a false pass (scoring the flagship scenario
+  100% while it failed 4 times in 5). Every "100% grounding" figure in this README means only
+  that an expected word appeared. This is the most significant remaining gap.
+- **Sample sizes are small.** Routing accuracy is 6 scenarios, so each one is worth 16.7% and
+  no run-to-run difference below that is meaningful. Retrieval is 26 queries, out-of-scope is
+  10. The numbers are real measurements, not estimates, but they are measurements with wide
+  confidence intervals and should be read that way.
 - **Conversation history is in-memory and unbounded** (`_sessions` dict in `main.py`) - fine
   for a demo/single-process deployment, but lost on restart and never evicted. A real
   deployment would need a store with TTL (Redis, a DB) instead.
@@ -415,11 +554,12 @@ verified, not where merely partially addressed:
 - **Tools are mocked.** `app/tools.py` returns fixed in-memory data; no real airline API was
   available for this challenge. Swapping in real API calls doesn't require changing anything
   else in the system.
-- **Confidence threshold (0.5, reranker scale) was picked from an empirical calibration run**
-  (`eval/calibrate_threshold.py`), not a labeled evaluation set, and the calibration found no
-  clean score separation between relevant and irrelevant content even after reranking. The
-  threshold alone cannot perfectly gate retrieval; the router's own judgment is relied on as
-  a second layer (see "How unnecessary calls are avoided").
+- **Confidence threshold (0.4, reranker scale)** was moved from 0.5 on a sweep over the
+  expanded 26-query in-scope and 10-query out-of-scope sets, which is better evidence than the
+  original `eval/calibrate_threshold.py` run but still not a labeled evaluation set. The
+  threshold alone cannot perfectly gate retrieval - the cross-encoder's absolute score is
+  strongly phrasing-dependent even when its *ranking* is correct - so the router's own
+  judgment is relied on as a second layer (see "How unnecessary calls are avoided").
 - **Precision@3 (75%) has a partially-understood ceiling.** Roughly a fifth of the
   "off-topic" slots in the current measurement are actually correct behavior (legitimately
   cross-category content), and the remainder is a mix of genuine semantic-adjacency
@@ -430,6 +570,8 @@ verified, not where merely partially addressed:
   here for a private/local demo of this challenge submission. If sharing this project
   publicly beyond this evaluation, the custom (non-trademarked) plane mark it was swapped in
   for and out of during development would be the safer choice.
-- **Uses OpenRouter's free tier**, which carries a *daily* request cap in addition to
-  per-minute rate limiting (see "How API errors are handled") - a full evaluation run can
-  hit this mid-run, which happened for real during this project's own testing.
+- **Retrieval degrades on very short queries.** Two- and three-word queries score near zero
+  under the cross-encoder even when the correct chunk ranks first ("flight change fees" ranks
+  correctly at 0.059). The router-side phrasing contract keeps such queries from being
+  generated, but the underlying retrieval weakness is unaddressed and would resurface behind
+  any other caller - a direct search box, for instance.
