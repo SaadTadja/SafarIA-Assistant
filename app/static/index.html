@@ -207,6 +207,54 @@
     border-bottom-left-radius: 4px;
   }
 
+  /* Rendered markdown answers. pre-wrap is dropped here because the renderer emits
+     real block elements; keeping both would double every gap. */
+  .row.bot .bubble.md { white-space: normal; }
+
+  .row.bot .bubble.md > *:first-child { margin-top: 0; }
+  .row.bot .bubble.md > *:last-child { margin-bottom: 0; }
+  .row.bot .bubble.md p { margin: 0 0 8px; }
+
+  .row.bot .bubble.md strong { font-weight: 700; color: #000; }
+  .row.bot .bubble.md em { font-style: italic; }
+
+  .row.bot .bubble.md h3,
+  .row.bot .bubble.md h4,
+  .row.bot .bubble.md h5,
+  .row.bot .bubble.md h6 {
+    margin: 10px 0 6px;
+    font-weight: 700;
+    color: #000;
+    line-height: 1.3;
+  }
+  .row.bot .bubble.md h3 { font-size: 15.5px; }
+  .row.bot .bubble.md h4 { font-size: 15px; }
+  .row.bot .bubble.md h5,
+  .row.bot .bubble.md h6 { font-size: 14.5px; }
+
+  .row.bot .bubble.md ul,
+  .row.bot .bubble.md ol { margin: 6px 0 8px; padding-left: 20px; }
+  .row.bot .bubble.md li { margin: 3px 0; }
+  .row.bot .bubble.md li::marker { color: var(--text-muted); }
+
+  .row.bot .bubble.md code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    background: rgba(0, 0, 0, 0.06);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .row.bot .bubble.md pre {
+    margin: 6px 0 8px;
+    padding: 10px 12px;
+    background: rgba(0, 0, 0, 0.06);
+    border-radius: 8px;
+    overflow-x: auto;
+  }
+  .row.bot .bubble.md pre code { background: none; padding: 0; }
+
+  .row.bot .bubble.md a { color: var(--accent); text-decoration: underline; }
+
   .row.bot .bubble.error {
     background: var(--error-bg);
     color: var(--error);
@@ -436,13 +484,100 @@ function formatSourceLabel(source) {
     .join(' + ');
 }
 
+function escapeHtml(text) {
+  const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  return text.replace(/[&<>"']/g, ch => entities[ch]);
+}
+
+// The model answers in markdown and the bubble used to show the raw syntax
+// ("**AH1235** est **annulé**"). This renders the subset the assistant actually
+// produces - headings, ordered/unordered lists, bold, italic, code, links - with no
+// build step and no library, matching the rest of this page.
+//
+// Everything is HTML-escaped FIRST and tags are only reintroduced from patterns
+// matched afterwards. Answers relay text retrieved from the policy corpus, so a
+// response is never trusted as markup: `<b>x</b>` in a document renders as visible
+// characters, not as a tag.
+function renderInline(text) {
+  return text
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    // Single-asterisk italics, deliberately narrow: the corpus marks table footnotes
+    // as "(*)" and "(**)", and a greedier rule turns those into stray markup.
+    .replace(/(^|[^*\w])\*([^\s*][^*\n]*?)\*(?![*\w])/g, '$1<em>$2</em>')
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
+             '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+}
+
+function renderMarkdown(source) {
+  let text = escapeHtml(source);
+
+  // Code is extracted before any inline rule runs, so markdown inside a code span
+  // stays literal. NUL can't occur in the escaped text, so it is a safe placeholder.
+  const blocks = [];
+  const stash = html => '\u0000' + (blocks.push(html) - 1) + '\u0000';
+  text = text.replace(/```[^\n]*\n?([\s\S]*?)```/g, (_, code) => stash('<pre><code>' + code + '</code></pre>'));
+  text = text.replace(/`([^`\n]+)`/g, (_, code) => stash('<code>' + code + '</code>'));
+
+  const out = [];
+  let paragraph = [];
+  let list = null;
+
+  const flushParagraph = () => {
+    if (paragraph.length) { out.push('<p>' + paragraph.join('<br>') + '</p>'); paragraph = []; }
+  };
+  const flushList = () => {
+    if (list) {
+      out.push('<' + list.tag + '>' + list.items.map(i => '<li>' + i + '</li>').join('') + '</' + list.tag + '>');
+      list = null;
+    }
+  };
+
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trimEnd();
+    if (!line.trim()) { flushParagraph(); flushList(); continue; }
+
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      flushParagraph(); flushList();
+      // Shifted down two levels: an <h1> inside a chat bubble is absurd.
+      const level = Math.min(heading[1].length + 2, 6);
+      out.push('<h' + level + '>' + renderInline(heading[2]) + '</h' + level + '>');
+      continue;
+    }
+
+    const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (bullet || numbered) {
+      flushParagraph();
+      const tag = bullet ? 'ul' : 'ol';
+      if (!list || list.tag !== tag) { flushList(); list = { tag: tag, items: [] }; }
+      list.items.push(renderInline((bullet || numbered)[1]));
+      continue;
+    }
+
+    flushList();
+    paragraph.push(renderInline(line));
+  }
+  flushParagraph();
+  flushList();
+
+  return out.join('').replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[Number(i)]);
+}
+
 function addRow(role, text) {
   emptyState.style.display = 'none';
   const row = document.createElement('div');
   row.className = 'row ' + role;
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
-  bubble.textContent = text;
+  // Only the assistant's own answers are rendered; anything the user typed stays
+  // literal, so typing ** in a question shows ** back.
+  if (role === 'bot') {
+    bubble.classList.add('md');
+    bubble.innerHTML = renderMarkdown(text);
+  } else {
+    bubble.textContent = text;
+  }
   row.appendChild(bubble);
   chat.appendChild(row);
   chat.parentElement.scrollTop = chat.parentElement.scrollHeight;
