@@ -55,13 +55,7 @@ def test_retrieval_finds_correct_category(index: RagIndex, query: str, expected_
 
 
 def test_out_of_scope_query_is_rejected(index: RagIndex):
-    # Deliberately unrelated to all 7 categories, in a language the corpus also covers.
-    # NOTE: "What is the aircraft's maximum cruising altitude?" is a KNOWN hard case for
-    # this multilingual model - it scores 0.619, above even some genuine matches (visa
-    # question: 0.595) - see eval/calibrate_threshold.py. No threshold value gets both
-    # right, so that specific query is intentionally not used here; it's covered instead
-    # by a router-level test (tests/test_router.py) checking the second defense layer -
-    # the LLM's tool-selection judgment - catches it even when raw similarity doesn't.
+    # Unrelated to all 7 categories, in a language the corpus also covers.
     result = index.search("Quel temps fait-il a Paris aujourd'hui ?")
     assert result["found"] is False
 

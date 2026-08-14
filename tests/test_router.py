@@ -1,10 +1,10 @@
-"""The 6 routing scenarios from the challenge brief itself, as an automated
-Routing Accuracy check. Requires a live OpenRouter API key and makes real API calls,
-so it's skipped automatically when OPENROUTER_API_KEY isn't set (e.g. in CI without secrets).
+"""Automated checks on the RAG / Tool routing decision (bonus: "tests automatiques sur le
+choix RAG / Tool"): the brief's 6 scenarios, plus small talk that must call nothing, an
+edge case the confidence threshold alone cannot reject, and conversational memory.
 
-Runs against a free-tier model (see app/router.py's module docstring for why) - measured
-at 66.7% routing accuracy rather than 100%, so some of these are expected to fail until
-there's budget for a paid model. That's a known, documented limitation, not a test bug.
+Makes real API calls, so it skips automatically without OPENROUTER_API_KEY. All 9 pass on
+the current model. A broader 31-scenario set lives in eval/routing_set.py - kept out of the
+suite so `pytest` stays fast; run it with `python -m eval.run_eval`.
 """
 
 import os
@@ -50,11 +50,12 @@ def test_no_tool_called_for_small_talk(client):
 
 
 def test_router_catches_hard_edge_case_raw_rag_misses(client):
-    """app/rag.py's confidence threshold alone can't reject this query (it scores 0.619,
-    above even some genuine matches - see eval/calibrate_threshold.py). This tests the
-    second defense layer: the router's tool-selection judgment should recognize this isn't
-    actually a policy question and not call search_knowledge_base for it at all, regardless
-    of what the raw similarity score would have said."""
+    """The second defense layer: the router should recognise this isn't a policy question
+    and not call search_knowledge_base at all, independently of what retrieval would score.
+
+    Kept as a router-level test even though the reranker now also rejects this query
+    cleanly (0.025) - it guards the routing judgment, not the threshold.
+    """
     result = chat(client, "What is the aircraft's maximum cruising altitude?")
     assert result["source"] == "llm", (
         f"expected no tool call (source='llm'), got source={result['source']!r} "
