@@ -183,3 +183,11 @@ de scénarios de routage est passé de 6 à 31 : à n=6, un seul scénario pesai
   une base de données avec TTL.
 - **Pas de base vectorielle.** Similarité cosinus en force brute sur 312 chunks : suffisant à
   cette taille, ne passera pas l'échelle au-delà de quelques milliers.
+
+## Licence
+
+MIT — voir [LICENSE](LICENSE).
+
+Les documents sous `Docs(for retrieving)/` sont des sources tierces qui restent la
+propriété de leurs détenteurs ; voir [NOTICE](NOTICE). Ce projet n'est pas affilié à
+Royal Air Maroc.
