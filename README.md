@@ -5,9 +5,11 @@ une base de connaissances RAG et aux questions propres à l'utilisateur via des 
 tout routé par une seule boucle de function calling. Construit sur FastAPI et le SDK OpenAI
 directement, sans LangChain ni LlamaIndex. « Safar » (voyage) + « IA ».
 
-<!-- Déposez la démo dans docs/demo.gif, puis décommentez la ligne suivante :
-![Démonstration](docs/demo.gif)
--->
+![Démonstration : le scénario hybride, où l'assistant vérifie le statut du vol puis consulte
+la politique de remboursement avant de répondre](docs/demo.gif)
+
+<sub>Le badge sous chaque réponse indique sa source. Ici : `Knowledge Base + get flight
+status`. [Démonstration complète (1 min 50)](docs/demo.mp4)</sub>
 
 **Routage correct sur 31 scénarios sur 31** · 42 tests · 0,00038 $ par requête ·
 [métriques détaillées](#métriques)
